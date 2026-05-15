@@ -8,6 +8,7 @@ use std::process::ExitCode;
 
 use clap::{Parser, Subcommand};
 use color_eyre::Result;
+use krypt_core::paths::Resolver;
 
 #[derive(Parser, Debug)]
 #[command(
@@ -36,6 +37,21 @@ enum Command {
         #[arg(default_value = ".krypt.toml")]
         path: PathBuf,
     },
+
+    /// Resolve and print every known path variable.
+    ///
+    /// Useful for sanity-checking that XDG paths land where you expect on
+    /// the current host, and for debugging `[paths]` overrides.
+    Paths {
+        /// Apply `[paths]` overrides from this config (defaults to
+        /// `.krypt.toml` if present). Pass `--no-config` to skip.
+        #[arg(long, default_value = ".krypt.toml")]
+        config: PathBuf,
+
+        /// Don't read overrides from any config file.
+        #[arg(long, conflicts_with = "config")]
+        no_config: bool,
+    },
 }
 
 fn main() -> Result<ExitCode> {
@@ -50,22 +66,65 @@ fn main() -> Result<ExitCode> {
     let cli = Cli::parse();
 
     match cli.command {
-        Some(Command::Version) | None => {
-            println!("krypt {}", env!("CARGO_PKG_VERSION"));
-            println!("  core:     {}", krypt_core::VERSION);
-            println!("  pkg:      {}", krypt_pkg::VERSION);
-            println!("  platform: {}", krypt_platform::VERSION);
+        Some(Command::Version) | None => cmd_version(),
+        Some(Command::Validate { path }) => cmd_validate(path),
+        Some(Command::Paths { config, no_config }) => cmd_paths(config, no_config),
+    }
+}
+
+fn cmd_version() -> Result<ExitCode> {
+    println!("krypt {}", env!("CARGO_PKG_VERSION"));
+    println!("  core:     {}", krypt_core::VERSION);
+    println!("  pkg:      {}", krypt_pkg::VERSION);
+    println!("  platform: {}", krypt_platform::VERSION);
+    Ok(ExitCode::SUCCESS)
+}
+
+fn cmd_validate(path: PathBuf) -> Result<ExitCode> {
+    match krypt_core::config::parse_file(&path) {
+        Ok(_) => {
+            println!("✓ {} parsed and validated successfully", path.display());
             Ok(ExitCode::SUCCESS)
         }
-        Some(Command::Validate { path }) => match krypt_core::config::parse_file(&path) {
-            Ok(_) => {
-                println!("✓ {} parsed and validated successfully", path.display());
-                Ok(ExitCode::SUCCESS)
+        Err(e) => {
+            eprintln!("✗ {e}");
+            Ok(ExitCode::from(2))
+        }
+    }
+}
+
+fn cmd_paths(config: PathBuf, no_config: bool) -> Result<ExitCode> {
+    let mut resolver = Resolver::new();
+
+    if !no_config && config.exists() {
+        match krypt_core::config::parse_file(&config) {
+            Ok(cfg) => {
+                resolver = resolver.with_overrides(cfg.paths.into_iter().collect());
+                println!("# Overrides loaded from: {}", config.display());
             }
             Err(e) => {
-                eprintln!("✗ {e}");
-                Ok(ExitCode::from(2))
+                eprintln!("warning: ignoring {} ({e})", config.display());
             }
-        },
+        }
     }
+
+    let names = resolver.known_vars();
+    let width = names.iter().map(|n| n.len()).max().unwrap_or(0);
+    let mut had_error = false;
+
+    for name in names {
+        match resolver.resolve_var(&name) {
+            Ok(v) => println!("{name:width$}  {v}"),
+            Err(e) => {
+                eprintln!("{name:width$}  <error: {e}>");
+                had_error = true;
+            }
+        }
+    }
+
+    Ok(if had_error {
+        ExitCode::from(2)
+    } else {
+        ExitCode::SUCCESS
+    })
 }

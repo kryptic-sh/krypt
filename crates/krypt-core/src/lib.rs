@@ -6,13 +6,16 @@
 //! Current modules:
 //!
 //! - [`config`] — `.krypt.toml` schema, parser, validator (issue #9)
+//! - [`paths`]  — `${VAR}` resolution with XDG defaults + platform gating
+//!                (issue #11)
 //!
-//! Planned for Phase 1: `include`, `paths`, `copy`, `manifest`, `runner`.
+//! Planned for Phase 1: `include`, `copy`, `manifest`, `runner`.
 
 #![forbid(unsafe_code)]
 #![warn(missing_docs)]
 
 pub mod config;
+pub mod paths;
 
 /// Crate version, exposed for `krypt --version` aggregation.
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
