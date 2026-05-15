@@ -10,13 +10,16 @@
 //!                 (issue #11)
 //! - [`include`] — `include = [...]` glob expansion and config merging
 //!                 (issue #10)
+//! - [`copy`]    — plan + atomic deploy of [[link]] and [[template]]
+//!                 entries to their resolved destinations (issue #12)
 //!
-//! Planned for Phase 1: `copy`, `manifest`, `runner`.
+//! Planned for Phase 1: `manifest`, `runner`.
 
 #![forbid(unsafe_code)]
 #![warn(missing_docs)]
 
 pub mod config;
+pub mod copy;
 pub mod include;
 pub mod paths;
 
