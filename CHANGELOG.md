@@ -49,6 +49,11 @@ patch bumps.
 
 ### Changed
 
+- CI matrix expanded to Ubuntu, macOS, and Windows for `clippy` and `test` jobs
+  (`fail-fast: false`). `fmt` remains Ubuntu-only. Gated the
+  `use std::os::unix::fs::PermissionsExt` import in `copy_engine.rs` tests
+  behind `#[cfg(unix)]` so the file compiles on Windows (#21).
+
 - `krypt update` and `krypt init` now use
   [gix (gitoxide)](https://github.com/Byron/gitoxide) as the sole git backend —
   no system `git` binary, no `git2`/`libgit2`. Only HTTPS URLs are supported for
