@@ -9,8 +9,10 @@ use std::process::ExitCode;
 use clap::{Parser, Subcommand, ValueEnum};
 use color_eyre::Result;
 use krypt_core::deploy::{DeployOpts, LinkReport, UnlinkReport, link, relink, unlink};
+use krypt_core::init::{InitError, InitOpts, init};
 use krypt_core::manifest::{DriftStatus, Manifest, detect_drift};
 use krypt_core::paths::{Platform, Resolver};
+use krypt_core::tool_config::ToolConfig;
 
 #[derive(Copy, Clone, Debug, ValueEnum)]
 enum PlatformArg {
@@ -109,6 +111,36 @@ enum Command {
     /// `unlink` followed by `link`. Useful after big `.krypt.toml`
     /// edits where you want a clean re-deploy.
     Relink(DeployArgs),
+
+    /// Clone a dotfiles repo and write the tool config.
+    ///
+    /// After `init`, run `krypt link --config <repo-path>/.krypt.toml` to
+    /// deploy your dotfiles.
+    Init(InitArgs),
+}
+
+#[derive(clap::Args, Debug)]
+struct InitArgs {
+    /// Remote URL to clone (positional).
+    #[arg(conflicts_with = "from")]
+    url: Option<String>,
+
+    /// Remote URL to clone (flag form — alias for the positional URL).
+    #[arg(long, conflicts_with = "url")]
+    from: Option<String>,
+
+    /// Create an empty `.krypt.toml` stub without cloning. Mutually
+    /// exclusive with providing a URL.
+    #[arg(long, conflicts_with = "url", conflicts_with = "from")]
+    bare: bool,
+
+    /// Wipe the repo path if it already exists.
+    #[arg(long)]
+    force: bool,
+
+    /// Override the default repo path (`${XDG_CONFIG}/krypt/repo`).
+    #[arg(long)]
+    repo_path: Option<PathBuf>,
 }
 
 #[derive(clap::Args, Debug)]
@@ -158,6 +190,7 @@ fn main() -> Result<ExitCode> {
             force,
         }) => cmd_unlink(manifest, dry_run, force),
         Some(Command::Relink(args)) => cmd_relink(args),
+        Some(Command::Init(args)) => cmd_init(args),
     }
 }
 
@@ -267,6 +300,60 @@ fn default_manifest_path() -> Result<PathBuf> {
         .resolve_var("XDG_STATE")
         .map_err(|e| color_eyre::eyre::eyre!("resolving XDG_STATE: {e}"))?;
     Ok(PathBuf::from(state).join("krypt").join("manifest.json"))
+}
+
+fn default_repo_path() -> Result<PathBuf> {
+    let r = Resolver::new();
+    let cfg = r
+        .resolve_var("XDG_CONFIG")
+        .map_err(|e| color_eyre::eyre::eyre!("resolving XDG_CONFIG: {e}"))?;
+    Ok(PathBuf::from(cfg).join("krypt").join("repo"))
+}
+
+fn cmd_init(args: InitArgs) -> Result<ExitCode> {
+    let url = args.from.or(args.url);
+
+    let repo_path = match args.repo_path {
+        Some(p) => p,
+        None => default_repo_path()?,
+    };
+
+    let tool_config_path = ToolConfig::default_path()
+        .map_err(|e| color_eyre::eyre::eyre!("resolving tool config path: {e}"))?;
+
+    let opts = InitOpts {
+        url,
+        repo_path,
+        tool_config_path,
+        bare: args.bare,
+        force: args.force,
+    };
+
+    match init(&opts) {
+        Ok(report) => {
+            println!("initialized repo at {}", report.repo_path.display());
+            println!(
+                "tool config written to {}",
+                report.tool_config_path.display()
+            );
+            Ok(ExitCode::SUCCESS)
+        }
+        Err(InitError::MissingUrl) => {
+            eprintln!("error: must provide URL or --bare");
+            Ok(ExitCode::from(2))
+        }
+        Err(InitError::RepoExists { path }) => {
+            eprintln!(
+                "error: {} already exists (use --force to overwrite)",
+                path.display()
+            );
+            Ok(ExitCode::from(1))
+        }
+        Err(e) => {
+            eprintln!("error: {e}");
+            Ok(ExitCode::from(1))
+        }
+    }
 }
 
 fn deploy_opts_from(args: &DeployArgs) -> Result<DeployOpts> {

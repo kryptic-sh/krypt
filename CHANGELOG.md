@@ -10,6 +10,17 @@ patch bumps.
 
 ### Added
 
+- `krypt init [URL] [--from <url>] [--bare] [--force] [--repo-path <path>]`
+  subcommand — clones a dotfiles repo into `${XDG_CONFIG}/krypt/repo` (or a
+  custom path) and writes a tool config at `${XDG_CONFIG}/krypt/config.toml`
+  with `[repo] path` and optional `url`. `--bare` creates an empty `.krypt.toml`
+  stub instead of cloning. `--force` wipes an existing repo path before
+  proceeding (#14).
+- `krypt_core::tool_config` module: `ToolConfig`, `RepoConfig`,
+  `ToolConfigError` — TOML-backed tool config with atomic save +
+  `deny_unknown_fields`.
+- `krypt_core::init` module: `InitOpts`, `InitReport`, `InitError`, `init` —
+  pure orchestration that shells out to `git clone` (no `git2` dependency).
 - Deployment manifest at `${XDG_STATE}/krypt/manifest.json`: versioned JSON
   schema, atomic write, SHA-256 hashes per entry, and drift detection comparing
   recorded hashes to current destination contents (#13).
