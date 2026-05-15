@@ -17,6 +17,14 @@ patch bumps.
   `drifted`, or `missing`; exits non-zero when any entry is dirty.
 - `krypt_core::manifest` module: `Manifest`, `ManifestEntry`, `hash_file`,
   `detect_drift`, `DriftStatus`, `DriftRecord`.
+- `krypt link` / `krypt unlink` / `krypt relink` CLI subcommands — idempotent
+  deploy of every entry in `.krypt.toml`, manifest-aware conflict narrowing
+  (re-writes against your own deploys are silent; foreign conflicts are skipped
+  unless `--force`), drift-safe unlink (`--force` to delete edited files), and a
+  `relink` convenience that chains both (#15). All three accept `--dry-run` and
+  `--platform <linux|macos|windows>` for cross-platform testing.
+- `krypt_core::deploy` module: `DeployOpts`, `LinkReport`, `UnlinkReport`,
+  `link`, `unlink`, `relink`, `DeployError`.
 
 ### Changed
 

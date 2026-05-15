@@ -14,6 +14,8 @@
 //!   entries to their resolved destinations (issue #12)
 //! - [`manifest`] — versioned record of what was deployed, with sha256
 //!   hashes for drift detection (issue #13)
+//! - [`deploy`]   — high-level link / unlink / relink orchestration
+//!   over the other modules (issue #15)
 //!
 //! Planned for Phase 1: `runner`.
 
@@ -22,6 +24,7 @@
 
 pub mod config;
 pub mod copy;
+pub mod deploy;
 pub mod include;
 pub mod manifest;
 pub mod paths;

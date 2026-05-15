@@ -6,10 +6,28 @@
 use std::path::PathBuf;
 use std::process::ExitCode;
 
-use clap::{Parser, Subcommand};
+use clap::{Parser, Subcommand, ValueEnum};
 use color_eyre::Result;
+use krypt_core::deploy::{DeployOpts, LinkReport, UnlinkReport, link, relink, unlink};
 use krypt_core::manifest::{DriftStatus, Manifest, detect_drift};
-use krypt_core::paths::Resolver;
+use krypt_core::paths::{Platform, Resolver};
+
+#[derive(Copy, Clone, Debug, ValueEnum)]
+enum PlatformArg {
+    Linux,
+    Macos,
+    Windows,
+}
+
+impl From<PlatformArg> for Platform {
+    fn from(p: PlatformArg) -> Self {
+        match p {
+            PlatformArg::Linux => Platform::Linux,
+            PlatformArg::Macos => Platform::Macos,
+            PlatformArg::Windows => Platform::Windows,
+        }
+    }
+}
 
 #[derive(Parser, Debug)]
 #[command(
@@ -64,6 +82,57 @@ enum Command {
         #[arg(long)]
         manifest: Option<PathBuf>,
     },
+
+    /// Deploy every entry in `.krypt.toml`. Idempotent.
+    ///
+    /// Re-deploys files whose destination matches the manifest hash
+    /// silently. Conflicts (destinations with content not tracked by the
+    /// manifest) are skipped unless `--force` is set.
+    Link(DeployArgs),
+
+    /// Remove every file recorded in the manifest.
+    ///
+    /// Drifted destinations are kept by default — pass `--force` to
+    /// delete them anyway.
+    Unlink {
+        /// Manifest path. Defaults to `${XDG_STATE}/krypt/manifest.json`.
+        #[arg(long)]
+        manifest: Option<PathBuf>,
+        /// Don't touch disk; print what would be removed.
+        #[arg(long)]
+        dry_run: bool,
+        /// Delete drifted destinations too.
+        #[arg(long)]
+        force: bool,
+    },
+
+    /// `unlink` followed by `link`. Useful after big `.krypt.toml`
+    /// edits where you want a clean re-deploy.
+    Relink(DeployArgs),
+}
+
+#[derive(clap::Args, Debug)]
+struct DeployArgs {
+    /// Path to `.krypt.toml`. Defaults to `.krypt.toml` in the cwd.
+    #[arg(long, default_value = ".krypt.toml")]
+    config: PathBuf,
+
+    /// Manifest path. Defaults to `${XDG_STATE}/krypt/manifest.json`.
+    #[arg(long)]
+    manifest: Option<PathBuf>,
+
+    /// Override the detected platform (testing escape hatch).
+    #[arg(long, value_enum)]
+    platform: Option<PlatformArg>,
+
+    /// Don't touch disk; print what would happen.
+    #[arg(long)]
+    dry_run: bool,
+
+    /// On `link`: overwrite real conflicts. On `relink`: overwrite + force-remove
+    /// drifted destinations during the unlink half.
+    #[arg(long)]
+    force: bool,
 }
 
 fn main() -> Result<ExitCode> {
@@ -82,6 +151,13 @@ fn main() -> Result<ExitCode> {
         Some(Command::Validate { path }) => cmd_validate(path),
         Some(Command::Paths { config, no_config }) => cmd_paths(config, no_config),
         Some(Command::Diff { manifest }) => cmd_diff(manifest),
+        Some(Command::Link(args)) => cmd_link(args),
+        Some(Command::Unlink {
+            manifest,
+            dry_run,
+            force,
+        }) => cmd_unlink(manifest, dry_run, force),
+        Some(Command::Relink(args)) => cmd_relink(args),
     }
 }
 
@@ -191,4 +267,92 @@ fn default_manifest_path() -> Result<PathBuf> {
         .resolve_var("XDG_STATE")
         .map_err(|e| color_eyre::eyre::eyre!("resolving XDG_STATE: {e}"))?;
     Ok(PathBuf::from(state).join("krypt").join("manifest.json"))
+}
+
+fn deploy_opts_from(args: &DeployArgs) -> Result<DeployOpts> {
+    let manifest_path = match &args.manifest {
+        Some(p) => p.clone(),
+        None => default_manifest_path()?,
+    };
+    Ok(DeployOpts {
+        config_path: args.config.clone(),
+        manifest_path,
+        platform: args.platform.map(Into::into),
+        dry_run: args.dry_run,
+        force: args.force,
+    })
+}
+
+fn cmd_link(args: DeployArgs) -> Result<ExitCode> {
+    let opts = deploy_opts_from(&args)?;
+    let r = link(&opts).map_err(color_eyre::eyre::Report::msg)?;
+    print_link_report(&r, opts.dry_run);
+    Ok(if r.conflicts_skipped > 0 {
+        ExitCode::from(1)
+    } else {
+        ExitCode::SUCCESS
+    })
+}
+
+fn cmd_unlink(manifest: Option<PathBuf>, dry_run: bool, force: bool) -> Result<ExitCode> {
+    let manifest_path = match manifest {
+        Some(p) => p,
+        None => default_manifest_path()?,
+    };
+    let opts = DeployOpts {
+        config_path: PathBuf::new(),
+        manifest_path,
+        platform: None,
+        dry_run,
+        force,
+    };
+    let r = unlink(&opts).map_err(color_eyre::eyre::Report::msg)?;
+    print_unlink_report(&r, dry_run);
+    Ok(if r.drift_skipped > 0 {
+        ExitCode::from(1)
+    } else {
+        ExitCode::SUCCESS
+    })
+}
+
+fn cmd_relink(args: DeployArgs) -> Result<ExitCode> {
+    let opts = deploy_opts_from(&args)?;
+    let (u, l) = relink(&opts).map_err(color_eyre::eyre::Report::msg)?;
+    println!("unlink:");
+    print_unlink_report(&u, opts.dry_run);
+    println!("link:");
+    print_link_report(&l, opts.dry_run);
+    Ok(if l.conflicts_skipped > 0 || u.drift_skipped > 0 {
+        ExitCode::from(1)
+    } else {
+        ExitCode::SUCCESS
+    })
+}
+
+fn print_link_report(r: &LinkReport, dry_run: bool) {
+    let verb = if dry_run { "would write" } else { "wrote" };
+    println!("  {verb}: {}", r.written);
+    if r.idempotent_rewrites > 0 {
+        println!("  idempotent re-deploys: {}", r.idempotent_rewrites);
+    }
+    if r.conflicts_skipped > 0 {
+        println!(
+            "  conflicts skipped: {} (re-run with --force to overwrite)",
+            r.conflicts_skipped
+        );
+    }
+}
+
+fn print_unlink_report(r: &UnlinkReport, dry_run: bool) {
+    let verb = if dry_run { "would remove" } else { "removed" };
+    println!("  {verb}: {}", r.removed);
+    if r.already_missing > 0 {
+        println!("  already missing: {}", r.already_missing);
+    }
+    if r.drift_skipped > 0 {
+        println!(
+            "  drifted (kept): {} (re-run with --force to delete)",
+            r.drift_skipped
+        );
+    }
 }
