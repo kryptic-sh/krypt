@@ -2028,6 +2028,7 @@ dependencies = [
  "krypt-core",
  "krypt-pkg",
  "krypt-platform",
+ "serde_json",
  "tracing",
  "tracing-subscriber",
 ]

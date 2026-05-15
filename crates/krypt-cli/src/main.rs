@@ -10,6 +10,7 @@ use clap::{Parser, Subcommand, ValueEnum};
 use color_eyre::Result;
 use krypt_core::adopt::{AdoptEditsOpts, AdoptError, AdoptOpts, adopt, adopt_edits};
 use krypt_core::deploy::{DeployOpts, LinkReport, UnlinkReport, link, relink, unlink};
+use krypt_core::doctor::{DoctorOpts, doctor};
 use krypt_core::init::{InitError, InitOpts, init};
 use krypt_core::manifest::{DriftStatus, Manifest, detect_drift};
 use krypt_core::paths::{Platform, Resolver};
@@ -146,6 +147,13 @@ enum Command {
     /// `<repo>/<src>` and refreshes the manifest hashes.
     #[command(name = "adopt-edits")]
     AdoptEdits(AdoptEditsArgs),
+
+    /// Run a full diagnostic health-check.
+    ///
+    /// Prints one status line per check. Use `--json` for machine-readable
+    /// output suitable for bug reports or scripting. Exits 0 when all
+    /// checks pass, 1 when one or more need attention.
+    Doctor(DoctorArgs),
 }
 
 #[derive(clap::Args, Debug)]
@@ -235,6 +243,29 @@ struct AdoptEditsArgs {
 }
 
 #[derive(clap::Args, Debug)]
+struct DoctorArgs {
+    /// Emit machine-readable JSON instead of the human-readable report.
+    #[arg(long)]
+    json: bool,
+
+    /// Override the path to `.krypt.toml`.
+    #[arg(long)]
+    config: Option<PathBuf>,
+
+    /// Override the manifest path.
+    #[arg(long)]
+    manifest: Option<PathBuf>,
+
+    /// Override the path to the tool config (`${XDG_CONFIG}/krypt/config.toml`).
+    #[arg(long)]
+    tool_config: Option<PathBuf>,
+
+    /// Override the repo path.
+    #[arg(long)]
+    repo_path: Option<PathBuf>,
+}
+
+#[derive(clap::Args, Debug)]
 struct DeployArgs {
     /// Path to `.krypt.toml`. Defaults to `.krypt.toml` in the cwd.
     #[arg(long, default_value = ".krypt.toml")]
@@ -285,6 +316,7 @@ fn main() -> Result<ExitCode> {
         Some(Command::Update(args)) => cmd_update(args),
         Some(Command::Adopt(args)) => cmd_adopt(args),
         Some(Command::AdoptEdits(args)) => cmd_adopt_edits(args),
+        Some(Command::Doctor(args)) => cmd_doctor(args),
     }
 }
 
@@ -679,4 +711,41 @@ fn cmd_adopt_edits(args: AdoptEditsArgs) -> Result<ExitCode> {
             Ok(ExitCode::from(1))
         }
     }
+}
+
+fn cmd_doctor(args: DoctorArgs) -> Result<ExitCode> {
+    let tool_config_path = match args.tool_config {
+        Some(p) => p,
+        None => ToolConfig::default_path()
+            .map_err(|e| color_eyre::eyre::eyre!("resolving tool config path: {e}"))?,
+    };
+    let manifest_path = match args.manifest {
+        Some(p) => p,
+        None => default_manifest_path()?,
+    };
+
+    let opts = DoctorOpts {
+        tool_config_path,
+        config_path: args.config,
+        manifest_path,
+        repo_path: args.repo_path,
+    };
+
+    let report = doctor(&opts);
+
+    if args.json {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&report)
+                .map_err(|e| color_eyre::eyre::eyre!("serializing report: {e}"))?
+        );
+    } else {
+        println!("{}", report.render_text());
+    }
+
+    Ok(if report.is_all_green() {
+        ExitCode::SUCCESS
+    } else {
+        ExitCode::from(1)
+    })
 }

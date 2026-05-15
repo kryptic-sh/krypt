@@ -10,6 +10,19 @@ patch bumps.
 
 ### Added
 
+- `krypt doctor [--json] [--config <path>] [--manifest <path>] [--tool-config <path>] [--repo-path <path>]`
+  subcommand — diagnostic health-check for an install. Prints one status line
+  per check (✓ / ! / ✗ / -) or, with `--json`, emits the `DoctorReport` struct
+  as pretty-printed JSON. Exits 0 when all checks pass, 1 when any need
+  attention. Checks implemented: tool config loaded, repo path exists, repo is a
+  git repo (gix), working tree clean, `.krypt.toml` parses + validates, all
+  `[[link]]` src files exist, deployed destination drift status (via manifest),
+  manifest age, platform detected. Deferred: package manager (#19), hooks (#43)
+  (#20).
+- `krypt_core::doctor` module: `DoctorOpts`, `DoctorReport`, `CheckStatus<T>`,
+  `doctor` — all checks captured in the report; callers read the exit code from
+  `report.is_all_green()`.
+
 - `krypt adopt <dst> [--src <rel>] [--repo-path <path>] [--manifest <path>] [--force] [--dry-run]`
   subcommand — imports a file already on disk into the dotfiles repo. Copies
   `<dst>` into `<repo>/<src>` (auto-derives `src` by stripping `$HOME`; use

@@ -24,6 +24,8 @@
 //!   (issue #17)
 //! - [`adopt`]       — `krypt adopt` / `krypt adopt-edits`: import existing
 //!   dotfiles into the repo and sync in-place edits back (issue #16)
+//! - [`doctor`]      — `krypt doctor` diagnostic health-check: prints one
+//!   status line per check and serializes to JSON for `--json` (issue #20)
 //!
 //! Planned for Phase 1: `runner`.
 
@@ -34,6 +36,7 @@ pub mod adopt;
 pub mod config;
 pub mod copy;
 pub mod deploy;
+pub mod doctor;
 pub mod include;
 pub mod init;
 pub mod manifest;
