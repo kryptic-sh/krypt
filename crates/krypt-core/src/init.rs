@@ -28,13 +28,13 @@ pub enum InitError {
         path: PathBuf,
     },
 
-    /// `git clone` exited non-zero.
-    #[error("git clone failed (exit {code}):\n{stderr}")]
+    /// `git clone` exited non-zero. Output is inherited from the parent,
+    /// so the user has already seen git's error on stderr — we just
+    /// surface the exit code.
+    #[error("git clone failed (exit {code})")]
     GitClone {
         /// Exit status code.
         code: i32,
-        /// Captured stderr from git.
-        stderr: String,
     },
 
     /// Spawning git failed entirely (e.g. git not on PATH).
@@ -127,15 +127,17 @@ fn prepare_repo_path(path: &Path, force: bool) -> Result<(), InitError> {
 }
 
 fn git_clone(url: &str, dest: &Path) -> Result<(), InitError> {
-    let out = Command::new("git")
-        .args(["clone", url, dest.to_str().unwrap_or("")])
-        .output()
+    let status = Command::new("git")
+        .arg("clone")
+        .arg(url)
+        .arg(dest)
+        .status()
         .map_err(InitError::GitSpawn)?;
 
-    if !out.status.success() {
-        let code = out.status.code().unwrap_or(-1);
-        let stderr = String::from_utf8_lossy(&out.stderr).into_owned();
-        return Err(InitError::GitClone { code, stderr });
+    if !status.success() {
+        return Err(InitError::GitClone {
+            code: status.code().unwrap_or(-1),
+        });
     }
     Ok(())
 }
