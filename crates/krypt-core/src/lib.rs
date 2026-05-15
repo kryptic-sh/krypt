@@ -22,12 +22,15 @@
 //!   (issue #14)
 //! - [`update`]      — `krypt update` orchestration: pull repo + re-deploy
 //!   (issue #17)
+//! - [`adopt`]       — `krypt adopt` / `krypt adopt-edits`: import existing
+//!   dotfiles into the repo and sync in-place edits back (issue #16)
 //!
 //! Planned for Phase 1: `runner`.
 
 #![forbid(unsafe_code)]
 #![warn(missing_docs)]
 
+pub mod adopt;
 pub mod config;
 pub mod copy;
 pub mod deploy;

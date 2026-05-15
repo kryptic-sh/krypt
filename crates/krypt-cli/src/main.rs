@@ -8,6 +8,7 @@ use std::process::ExitCode;
 
 use clap::{Parser, Subcommand, ValueEnum};
 use color_eyre::Result;
+use krypt_core::adopt::{AdoptEditsOpts, AdoptError, AdoptOpts, adopt, adopt_edits};
 use krypt_core::deploy::{DeployOpts, LinkReport, UnlinkReport, link, relink, unlink};
 use krypt_core::init::{InitError, InitOpts, init};
 use krypt_core::manifest::{DriftStatus, Manifest, detect_drift};
@@ -128,6 +129,23 @@ enum Command {
     /// stash, or discard any changes first.  Auto-stash support is planned
     /// once gix gains a stash API.
     Update(UpdateArgs),
+
+    /// Import an existing file into the dotfiles repo.
+    ///
+    /// Copies the file at `<dst>` into the repo (auto-derives the repo-relative
+    /// path by stripping `$HOME`), records a manifest entry, and prints a
+    /// `[[link]]` block to paste into `.krypt.toml`.
+    ///
+    /// The original file at `<dst>` is left in place — nothing is moved.
+    #[command(name = "adopt")]
+    Adopt(AdoptArgs),
+
+    /// Sync in-place edits on deployed files back into the repo.
+    ///
+    /// For every drifted manifest entry, copies `dst` bytes back into
+    /// `<repo>/<src>` and refreshes the manifest hashes.
+    #[command(name = "adopt-edits")]
+    AdoptEdits(AdoptEditsArgs),
 }
 
 #[derive(clap::Args, Debug)]
@@ -171,6 +189,49 @@ struct UpdateArgs {
     /// On link: overwrite real conflicts.
     #[arg(long)]
     force: bool,
+}
+
+#[derive(clap::Args, Debug)]
+struct AdoptArgs {
+    /// Absolute path to the file to import (typically under `$HOME`).
+    dst: PathBuf,
+
+    /// Override the auto-derived repo-relative source path.
+    ///
+    /// Required when `<dst>` is not under `$HOME`.
+    #[arg(long)]
+    src: Option<PathBuf>,
+
+    /// Override the default repo path (`${XDG_CONFIG}/krypt/repo`).
+    #[arg(long)]
+    repo_path: Option<PathBuf>,
+
+    /// Override the manifest path (`${XDG_STATE}/krypt/manifest.json`).
+    #[arg(long)]
+    manifest: Option<PathBuf>,
+
+    /// Overwrite an existing file at `<repo>/<src>` without erroring.
+    #[arg(long)]
+    force: bool,
+
+    /// Print the `[[link]]` suggestion without touching disk.
+    #[arg(long)]
+    dry_run: bool,
+}
+
+#[derive(clap::Args, Debug)]
+struct AdoptEditsArgs {
+    /// Override the manifest path (`${XDG_STATE}/krypt/manifest.json`).
+    #[arg(long)]
+    manifest: Option<PathBuf>,
+
+    /// Override the default repo path (`${XDG_CONFIG}/krypt/repo`).
+    #[arg(long)]
+    repo_path: Option<PathBuf>,
+
+    /// Print what would be synced without touching disk.
+    #[arg(long)]
+    dry_run: bool,
 }
 
 #[derive(clap::Args, Debug)]
@@ -222,6 +283,8 @@ fn main() -> Result<ExitCode> {
         Some(Command::Relink(args)) => cmd_relink(args),
         Some(Command::Init(args)) => cmd_init(args),
         Some(Command::Update(args)) => cmd_update(args),
+        Some(Command::Adopt(args)) => cmd_adopt(args),
+        Some(Command::AdoptEdits(args)) => cmd_adopt_edits(args),
     }
 }
 
@@ -529,5 +592,91 @@ fn print_unlink_report(r: &UnlinkReport, dry_run: bool) {
             "  drifted (kept): {} (re-run with --force to delete)",
             r.drift_skipped
         );
+    }
+}
+
+fn cmd_adopt(args: AdoptArgs) -> Result<ExitCode> {
+    let repo_path = match args.repo_path {
+        Some(p) => p,
+        None => default_repo_path()?,
+    };
+    let manifest_path = match args.manifest {
+        Some(p) => p,
+        None => default_manifest_path()?,
+    };
+
+    let opts = AdoptOpts {
+        dst: args.dst,
+        src_override: args.src,
+        repo_path,
+        manifest_path,
+        force: args.force,
+        dry_run: args.dry_run,
+        resolver: Resolver::new(),
+    };
+
+    match adopt(&opts) {
+        Ok(report) => {
+            println!("{}", report.link_suggestion);
+            if args.dry_run {
+                println!("\n(dry-run: no files written)");
+            } else {
+                println!("\nadopted: {:?} -> repo:{:?}", report.dst, report.src);
+            }
+            Ok(ExitCode::SUCCESS)
+        }
+        Err(AdoptError::DstMissing(p)) => {
+            eprintln!("error: dst does not exist: {}", p.display());
+            Ok(ExitCode::from(1))
+        }
+        Err(AdoptError::OutsideHome { dst }) => {
+            eprintln!(
+                "error: {} is outside $HOME; provide --src <rel> to name the repo-relative path",
+                dst.display()
+            );
+            Ok(ExitCode::from(2))
+        }
+        Err(AdoptError::RepoCollision { src }) => {
+            eprintln!(
+                "error: repo already has {}; use --force to overwrite, or --src to pick a different name",
+                src.display()
+            );
+            Ok(ExitCode::from(1))
+        }
+        Err(e) => {
+            eprintln!("error: {e}");
+            Ok(ExitCode::from(1))
+        }
+    }
+}
+
+fn cmd_adopt_edits(args: AdoptEditsArgs) -> Result<ExitCode> {
+    let repo_path = match args.repo_path {
+        Some(p) => p,
+        None => default_repo_path()?,
+    };
+    let manifest_path = match args.manifest {
+        Some(p) => p,
+        None => default_manifest_path()?,
+    };
+
+    let opts = AdoptEditsOpts {
+        manifest_path,
+        repo_path,
+        dry_run: args.dry_run,
+    };
+
+    match adopt_edits(&opts) {
+        Ok(report) => {
+            println!(
+                "adopted edits for {} entries ({} clean, {} missing)",
+                report.adopted, report.clean, report.missing
+            );
+            Ok(ExitCode::SUCCESS)
+        }
+        Err(e) => {
+            eprintln!("error: {e}");
+            Ok(ExitCode::from(1))
+        }
     }
 }

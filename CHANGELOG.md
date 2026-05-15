@@ -10,6 +10,23 @@ patch bumps.
 
 ### Added
 
+- `krypt adopt <dst> [--src <rel>] [--repo-path <path>] [--manifest <path>] [--force] [--dry-run]`
+  subcommand — imports a file already on disk into the dotfiles repo. Copies
+  `<dst>` into `<repo>/<src>` (auto-derives `src` by stripping `$HOME`; use
+  `--src` when the file is outside `$HOME`), records a manifest entry with
+  matching `hash_src`/`hash_dst`, and prints a ready-to-paste `[[link]]` block.
+  The original file at `dst` is left untouched. `.krypt.toml` is **not**
+  modified automatically — the printed `[[link]]` block must be pasted in
+  manually to avoid round-trippy TOML mutation (#16).
+- `krypt adopt-edits [--manifest <path>] [--repo-path <path>] [--dry-run]`
+  subcommand — for every drifted manifest entry, copies the current `dst` bytes
+  back into `<repo>/<src>` and refreshes `hash_src`/`hash_dst`. Prints a
+  one-line summary. `DstMissing` entries are skipped with a stderr warning and
+  their manifest entries are left unchanged (#16).
+- `krypt_core::adopt` module: `AdoptOpts`, `AdoptReport`, `adopt`,
+  `AdoptEditsOpts`, `AdoptEditsReport`, `adopt_edits`, `AdoptError` (variants:
+  `DstMissing`, `OutsideHome`, `RepoCollision`, `Io`, `Manifest`, `Resolve`).
+
 - `krypt update [--dry-run] [--skip-hooks] [--force]` subcommand — pulls the
   dotfiles repo via fast-forward using gix (no system `git` required), re-runs
   `link` to deploy any new files, and warns to stderr if the binary is older
