@@ -16,6 +16,8 @@ use krypt_core::manifest::{DriftStatus, Manifest, detect_drift};
 use krypt_core::paths::{Platform, Resolver};
 use krypt_core::tool_config::ToolConfig;
 use krypt_core::update::{UpdateError, UpdateOpts, update};
+use krypt_pkg::deps::{DepsError, DepsOpts, install_deps};
+use krypt_pkg::manager::RealRunner;
 
 #[derive(Copy, Clone, Debug, ValueEnum)]
 enum PlatformArg {
@@ -154,6 +156,14 @@ enum Command {
     /// output suitable for bug reports or scripting. Exits 0 when all
     /// checks pass, 1 when one or more need attention.
     Doctor(DoctorArgs),
+
+    /// Install packages listed in `[[deps]]` using the appropriate package manager.
+    ///
+    /// Auto-detects the right manager for the current OS. Use `--manager` to
+    /// override. Groups are filtered by `required_platforms`; use `--group` to
+    /// target a single group. Use `--dry-run` to see what would be installed
+    /// without touching the system.
+    Deps(DepsArgs),
 }
 
 #[derive(clap::Args, Debug)]
@@ -266,6 +276,25 @@ struct DoctorArgs {
 }
 
 #[derive(clap::Args, Debug)]
+struct DepsArgs {
+    /// Path to `.krypt.toml`. Defaults to `.krypt.toml` in the current directory.
+    #[arg(long, default_value = ".krypt.toml")]
+    config: PathBuf,
+
+    /// Override the detected package manager (e.g. `apt`, `pacman`).
+    #[arg(long)]
+    manager: Option<String>,
+
+    /// Install only this dependency group.
+    #[arg(long)]
+    group: Option<String>,
+
+    /// Print what would be installed without touching the system.
+    #[arg(long)]
+    dry_run: bool,
+}
+
+#[derive(clap::Args, Debug)]
 struct DeployArgs {
     /// Path to `.krypt.toml`. Defaults to `.krypt.toml` in the cwd.
     #[arg(long, default_value = ".krypt.toml")]
@@ -317,6 +346,7 @@ fn main() -> Result<ExitCode> {
         Some(Command::Adopt(args)) => cmd_adopt(args),
         Some(Command::AdoptEdits(args)) => cmd_adopt_edits(args),
         Some(Command::Doctor(args)) => cmd_doctor(args),
+        Some(Command::Deps(args)) => cmd_deps(args),
     }
 }
 
@@ -713,6 +743,83 @@ fn cmd_adopt_edits(args: AdoptEditsArgs) -> Result<ExitCode> {
     }
 }
 
+fn cmd_deps(args: DepsArgs) -> Result<ExitCode> {
+    let config = krypt_core::config::parse_file(&args.config)
+        .map_err(|e| color_eyre::eyre::eyre!("loading config: {e}"))?;
+
+    let current_platform = Platform::current().as_str();
+    let groups: Vec<krypt_pkg::deps::DepGroup> = config
+        .deps
+        .into_iter()
+        .filter(|g| {
+            let rp = &g.required_platforms;
+            rp.is_empty() || rp.iter().any(|p| p == "all" || p == current_platform)
+        })
+        .map(|g| krypt_pkg::deps::DepGroup {
+            group: g.group,
+            pacman: g.pacman,
+            apt: g.apt,
+            dnf: g.dnf,
+            brew: g.brew,
+            scoop: g.scoop,
+            winget: g.winget,
+        })
+        .collect();
+
+    let opts = DepsOpts {
+        groups,
+        manager: args.manager,
+        group_filter: args.group,
+        dry_run: args.dry_run,
+    };
+    let runner = RealRunner;
+
+    let report = match install_deps(&opts, &runner) {
+        Ok(r) => r,
+        Err(DepsError::NoManagerDetected) => {
+            eprintln!("error: no package manager detected; install one or use --manager <name>");
+            return Ok(ExitCode::from(2));
+        }
+        Err(DepsError::UnknownManager(name)) => {
+            eprintln!("error: unknown package manager '{name}'");
+            return Ok(ExitCode::from(2));
+        }
+        Err(e) => {
+            eprintln!("error: {e}");
+            return Ok(ExitCode::from(1));
+        }
+    };
+
+    let dry_label = if args.dry_run { " (dry-run)" } else { "" };
+    println!("manager: {}{}", report.manager_used, dry_label);
+
+    if !report.already_installed.is_empty() {
+        println!("already installed: {}", report.already_installed.join(", "));
+    }
+    if !report.installed.is_empty() {
+        let verb = if args.dry_run {
+            "would install"
+        } else {
+            "installed"
+        };
+        println!("{}: {}", verb, report.installed.join(", "));
+    }
+    if !report.skipped_unavailable.is_empty() {
+        println!(
+            "skipped (no packages for this manager): {}",
+            report.skipped_unavailable.join(", ")
+        );
+    }
+    if !report.failed.is_empty() {
+        for (pkg, err) in &report.failed {
+            eprintln!("failed: {pkg}: {err}");
+        }
+        return Ok(ExitCode::from(1));
+    }
+
+    Ok(ExitCode::SUCCESS)
+}
+
 fn cmd_doctor(args: DoctorArgs) -> Result<ExitCode> {
     let tool_config_path = match args.tool_config {
         Some(p) => p,
@@ -724,11 +831,14 @@ fn cmd_doctor(args: DoctorArgs) -> Result<ExitCode> {
         None => default_manifest_path()?,
     };
 
+    let detected_manager = krypt_pkg::detect::pick_default().map(|m| m.name().to_owned());
+
     let opts = DoctorOpts {
         tool_config_path,
         config_path: args.config,
         manifest_path,
         repo_path: args.repo_path,
+        detected_manager,
     };
 
     let report = doctor(&opts);

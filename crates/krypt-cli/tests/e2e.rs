@@ -423,6 +423,61 @@ fn test_adopt_edits() {
     );
 }
 
+/// `krypt deps --dry-run` — reads a synthetic config with one `[[deps]]` group,
+/// exits 0, and prints the expected packages without touching the system.
+#[test]
+fn test_deps_dry_run() {
+    let env = Env::new();
+    env.create_xdg_dirs();
+    init_bare(&env);
+
+    let rp = repo_path(&env);
+
+    // Write a .krypt.toml with a [[deps]] group that has packages for every manager.
+    let krypt_toml = concat!(
+        "[[deps]]\n",
+        "group = \"core\"\n",
+        "required_platforms = [\"all\"]\n",
+        "pacman = [\"base-devel\"]\n",
+        "apt = [\"build-essential\"]\n",
+        "dnf = [\"@development-tools\"]\n",
+        "brew = [\"coreutils\"]\n",
+        "scoop = [\"git\"]\n",
+        "winget = [\"Git.Git\"]\n",
+    );
+    fs::write(rp.join(".krypt.toml"), krypt_toml).expect("write .krypt.toml");
+
+    let config_path = rp.join(".krypt.toml");
+
+    let output = cmd(&env)
+        .args([
+            "deps",
+            "--config",
+            &config_path.to_string_lossy(),
+            "--dry-run",
+        ])
+        .output()
+        .expect("run deps --dry-run");
+
+    // --dry-run should always exit 0 (no real install to fail).
+    assert!(
+        output.status.success(),
+        "deps --dry-run should exit 0; stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let stdout = String::from_utf8_lossy(&output.stdout).into_owned();
+    // The output should mention the manager used and "(dry-run)".
+    assert!(
+        stdout.contains("dry-run"),
+        "output should mention dry-run: {stdout}"
+    );
+    assert!(
+        stdout.contains("manager:"),
+        "output should name the manager: {stdout}"
+    );
+}
+
 /// `krypt doctor` — after link, text output contains key check labels; `--json`
 /// produces parseable JSON with expected keys.
 #[test]

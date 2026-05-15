@@ -10,6 +10,29 @@ patch bumps.
 
 ### Added
 
+- `krypt deps [--manager <name>] [--group <name>] [--config <path>] [--dry-run]`
+  subcommand — installs every `[[deps]]` group's packages using the detected (or
+  specified) package manager. Groups are filtered by `required_platforms` before
+  dispatch; `--dry-run` skips actual installation and reports what would be
+  installed. Exits non-zero when any package fails (#19).
+- `krypt-pkg` crate fully implemented: `PackageManager` trait, `Runner` trait
+  (with `RealRunner` and `MockRunner`), six concrete impls (pacman/paru, apt,
+  dnf, brew, scoop, winget), auto-detection via `detect_all` / `pick_default` /
+  `pick_by_name`, and `install_deps` orchestration in `deps.rs`. krypt-pkg has
+  no dependency on krypt-core — the CLI layer maps `DepsGroup` to `DepGroup`
+  before calling in, keeping the crate free of gix / OpenSSL (#19).
+- `krypt doctor` package manager check: now calls
+  `krypt_pkg::detect::pick_default()` and reports the detected manager name (or
+  a warning when none is found). `DoctorOpts` gained a
+  `detected_manager: Option<String>` field populated by the CLI; the check is no
+  longer "pending #19" (#19).
+- Integration tests in `crates/krypt-pkg/tests/manager.rs`: one install + one
+  is_installed test per manager (all using `MockRunner`), auto-detection smoke
+  tests, and three `install_deps` orchestration tests (filter by manager,
+  group_filter, empty package list). E2E test in
+  `crates/krypt-cli/tests/e2e.rs`: `krypt deps --dry-run` against a synthetic
+  config verifies exit 0 and human-readable output (#19).
+
 - End-to-end integration test harness in `crates/krypt-cli/tests/e2e.rs` —
   executes the compiled `krypt` binary against isolated tempdir sandboxes (HOME,
   XDG_CONFIG_HOME, XDG_STATE_HOME, XDG_DATA_HOME, XDG_CACHE_HOME all redirected

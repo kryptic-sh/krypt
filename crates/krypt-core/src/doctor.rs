@@ -66,6 +66,9 @@ pub struct DoctorOpts {
     pub manifest_path: PathBuf,
     /// Override the repo path. Derived from tool config when absent.
     pub repo_path: Option<PathBuf>,
+    /// Detected package manager name, supplied by the CLI layer (krypt-pkg).
+    /// `None` signals that detection was skipped or nothing was found.
+    pub detected_manager: Option<String>,
 }
 
 // ─── DoctorReport ───────────────────────────────────────────────────────────
@@ -247,6 +250,12 @@ pub fn doctor(opts: &DoctorOpts) -> DoctorReport {
     // ── platform ─────────────────────────────────────────────────────────────
     let platform_check = CheckStatus::Ok(Platform::current().as_str().to_owned());
 
+    // ── package manager ──────────────────────────────────────────────────────
+    let package_manager_check = match &opts.detected_manager {
+        Some(name) => CheckStatus::Ok(name.clone()),
+        None => CheckStatus::Warn("no package manager detected on PATH".into()),
+    };
+
     DoctorReport {
         tool_version,
         tool_config: tool_config_check,
@@ -258,7 +267,7 @@ pub fn doctor(opts: &DoctorOpts) -> DoctorReport {
         link_destinations: link_destinations_check,
         manifest: manifest_check,
         platform: platform_check,
-        package_manager: CheckStatus::NotApplicable("pending #19".into()),
+        package_manager: package_manager_check,
         hooks: CheckStatus::NotApplicable("pending #43".into()),
     }
 }
@@ -556,6 +565,7 @@ mod tests {
             config_path: None,
             manifest_path,
             repo_path: None,
+            detected_manager: Some("pacman".into()),
         });
 
         assert!(
@@ -609,6 +619,7 @@ mod tests {
             config_path: None,
             manifest_path: state_dir.path().join("manifest.json"),
             repo_path: None,
+            detected_manager: None,
         });
 
         assert!(report.tool_config.needs_attention());
@@ -631,6 +642,7 @@ mod tests {
             config_path: None,
             manifest_path: state_dir.path().join("manifest.json"),
             repo_path: None,
+            detected_manager: None,
         });
 
         assert!(report.repo_path.needs_attention());
@@ -653,6 +665,7 @@ mod tests {
             config_path: None,
             manifest_path: state_dir.path().join("manifest.json"),
             repo_path: None,
+            detected_manager: None,
         });
 
         assert!(report.repo_path.is_ok());
@@ -682,6 +695,7 @@ mod tests {
             config_path: None,
             manifest_path: state_dir.path().join("manifest.json"),
             repo_path: None,
+            detected_manager: None,
         });
 
         assert!(report.link_sources.needs_attention());
@@ -721,6 +735,7 @@ mod tests {
             config_path: None,
             manifest_path,
             repo_path: None,
+            detected_manager: None,
         });
 
         assert!(report.link_destinations.needs_attention());
@@ -741,6 +756,7 @@ mod tests {
             config_path: None,
             manifest_path: state_dir.path().join("manifest.json"),
             repo_path: None,
+            detected_manager: None,
         });
 
         let json = serde_json::to_string_pretty(&report).expect("serialize");
