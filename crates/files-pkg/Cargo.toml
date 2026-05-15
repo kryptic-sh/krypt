@@ -1,0 +1,14 @@
+[package]
+name          = "files-pkg"
+description   = "Package manager abstraction for the `files` dotfiles manager: pacman, apt, brew, scoop, winget, dnf."
+version.workspace      = true
+authors.workspace      = true
+edition.workspace      = true
+rust-version.workspace = true
+license.workspace      = true
+repository.workspace   = true
+homepage.workspace     = true
+readme.workspace       = true
+
+[dependencies]
+tracing = { workspace = true }

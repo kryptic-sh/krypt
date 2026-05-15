@@ -1,0 +1,39 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/files-cli",
+    "crates/files-core",
+    "crates/files-pkg",
+    "crates/files-platform",
+]
+
+[workspace.package]
+version       = "0.0.1"
+authors       = ["mxaddict <mxaddict@kryptic.sh>"]
+edition       = "2021"
+rust-version  = "1.85"
+license       = "MIT"
+repository    = "https://github.com/mxaddict/files"
+homepage      = "https://github.com/mxaddict/files"
+readme        = "README.md"
+
+[workspace.dependencies]
+clap        = { version = "4.5", features = ["derive"] }
+color-eyre  = "0.6"
+serde       = { version = "1", features = ["derive"] }
+toml        = "0.8"
+tracing     = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+# Workspace internal crates
+files-core     = { path = "crates/files-core",     version = "0.0.1" }
+files-pkg      = { path = "crates/files-pkg",      version = "0.0.1" }
+files-platform = { path = "crates/files-platform", version = "0.0.1" }
+
+[profile.release]
+lto           = "thin"
+codegen-units = 1
+strip         = "symbols"
+
+[profile.dev]
+debug = "limited"

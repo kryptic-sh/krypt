@@ -1,0 +1,16 @@
+[package]
+name          = "files-core"
+description   = "Core engine for the `files` dotfiles manager: config, paths, copy, manifest, runner."
+version.workspace      = true
+authors.workspace      = true
+edition.workspace      = true
+rust-version.workspace = true
+license.workspace      = true
+repository.workspace   = true
+homepage.workspace     = true
+readme.workspace       = true
+
+[dependencies]
+serde   = { workspace = true }
+toml    = { workspace = true }
+tracing = { workspace = true }

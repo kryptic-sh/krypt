@@ -1,0 +1,27 @@
+[package]
+name          = "files"
+description   = "Cross-platform dotfiles manager. Rust binary. Config-driven."
+version.workspace      = true
+authors.workspace      = true
+edition.workspace      = true
+rust-version.workspace = true
+license.workspace      = true
+repository.workspace   = true
+homepage.workspace     = true
+readme.workspace       = true
+keywords    = ["dotfiles", "config", "stow", "cli"]
+categories  = ["command-line-utilities", "config"]
+
+[[bin]]
+name = "files"
+path = "src/main.rs"
+
+[dependencies]
+clap               = { workspace = true }
+color-eyre         = { workspace = true }
+tracing            = { workspace = true }
+tracing-subscriber = { workspace = true }
+
+files-core     = { workspace = true }
+files-pkg      = { workspace = true }
+files-platform = { workspace = true }
