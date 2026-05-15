@@ -332,9 +332,9 @@ mod tests {
         let upstream = tempdir().unwrap();
         let local = tempdir().unwrap();
 
-        git(origin.path(), &["init", "--bare"]);
+        git(origin.path(), &["init", "--bare", "-b", "main"]);
 
-        git(upstream.path(), &["init"]);
+        git(upstream.path(), &["init", "-b", "main"]);
         git(
             upstream.path(),
             &["remote", "add", "origin", origin.path().to_str().unwrap()],
