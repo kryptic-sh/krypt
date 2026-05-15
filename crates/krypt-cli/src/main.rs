@@ -13,6 +13,7 @@ use krypt_core::init::{InitError, InitOpts, init};
 use krypt_core::manifest::{DriftStatus, Manifest, detect_drift};
 use krypt_core::paths::{Platform, Resolver};
 use krypt_core::tool_config::ToolConfig;
+use krypt_core::update::{UpdateError, UpdateOpts, update};
 
 #[derive(Copy, Clone, Debug, ValueEnum)]
 enum PlatformArg {
@@ -117,6 +118,13 @@ enum Command {
     /// After `init`, run `krypt link --config <repo-path>/.krypt.toml` to
     /// deploy your dotfiles.
     Init(InitArgs),
+
+    /// Pull the dotfiles repo and re-deploy.
+    ///
+    /// Reads the tool config to find the repo, fast-forward-pulls it, then
+    /// re-runs `link`. Local changes are stashed before pulling and restored
+    /// after unless `--no-stash` is set.
+    Update(UpdateArgs),
 }
 
 #[derive(clap::Args, Debug)]
@@ -141,6 +149,29 @@ struct InitArgs {
     /// Override the default repo path (`${XDG_CONFIG}/krypt/repo`).
     #[arg(long)]
     repo_path: Option<PathBuf>,
+}
+
+#[derive(clap::Args, Debug)]
+struct UpdateArgs {
+    /// Override the path to `.krypt.toml` (defaults to `<repo_path>/.krypt.toml`).
+    #[arg(long)]
+    config: Option<PathBuf>,
+
+    /// Don't touch disk; pull the repo but pass dry_run to link.
+    #[arg(long)]
+    dry_run: bool,
+
+    /// Abort if the working tree is dirty instead of auto-stashing.
+    #[arg(long)]
+    no_stash: bool,
+
+    /// (No-op) Accept the flag for forward compatibility when hooks are implemented.
+    #[arg(long)]
+    skip_hooks: bool,
+
+    /// On link: overwrite real conflicts.
+    #[arg(long)]
+    force: bool,
 }
 
 #[derive(clap::Args, Debug)]
@@ -191,6 +222,7 @@ fn main() -> Result<ExitCode> {
         }) => cmd_unlink(manifest, dry_run, force),
         Some(Command::Relink(args)) => cmd_relink(args),
         Some(Command::Init(args)) => cmd_init(args),
+        Some(Command::Update(args)) => cmd_update(args),
     }
 }
 
@@ -347,6 +379,71 @@ fn cmd_init(args: InitArgs) -> Result<ExitCode> {
                 "error: {} already exists (use --force to overwrite)",
                 path.display()
             );
+            Ok(ExitCode::from(1))
+        }
+        Err(e) => {
+            eprintln!("error: {e}");
+            Ok(ExitCode::from(1))
+        }
+    }
+}
+
+fn cmd_update(args: UpdateArgs) -> Result<ExitCode> {
+    let tool_config_path = ToolConfig::default_path()
+        .map_err(|e| color_eyre::eyre::eyre!("resolving tool config path: {e}"))?;
+
+    let manifest_path = default_manifest_path()?;
+
+    let opts = UpdateOpts {
+        tool_config_path,
+        config_path: args.config,
+        manifest_path,
+        dry_run: args.dry_run,
+        no_stash: args.no_stash,
+        skip_hooks: args.skip_hooks,
+        force: args.force,
+    };
+
+    match update(&opts) {
+        Ok(report) => {
+            if let Some(warn) = &report.version_warning {
+                eprintln!("{warn}");
+            }
+            if report.hooks_skipped > 0 {
+                eprintln!(
+                    "warning: {n} post-update hook(s) configured but hook execution not yet \
+                     implemented — see #43",
+                    n = report.hooks_skipped,
+                );
+            }
+            if report.stashed {
+                println!("stashed local changes");
+            }
+            println!("pull:  {}", if report.pulled { "ok" } else { "up to date" });
+            println!("link:");
+            print_link_report(&report.link, opts.dry_run);
+            if report.stashed {
+                println!("stash restored");
+            }
+            Ok(if report.link.conflicts_skipped > 0 {
+                ExitCode::from(1)
+            } else {
+                ExitCode::SUCCESS
+            })
+        }
+        Err(UpdateError::ToolConfigMissing { .. }) => {
+            eprintln!(
+                "error: {}",
+                UpdateError::ToolConfigMissing {
+                    path: opts.tool_config_path
+                }
+            );
+            eprintln!("hint:  run `krypt init` to set up your dotfiles repo first");
+            Ok(ExitCode::from(2))
+        }
+        Err(UpdateError::DirtyWorkingTree) => {
+            eprintln!("error: working tree is dirty");
+            eprintln!("hint:  remove --no-stash to let krypt stash your changes automatically");
             Ok(ExitCode::from(1))
         }
         Err(e) => {

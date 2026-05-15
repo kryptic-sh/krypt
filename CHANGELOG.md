@@ -10,6 +10,15 @@ patch bumps.
 
 ### Added
 
+- `krypt update [--dry-run] [--no-stash] [--skip-hooks] [--force]` subcommand —
+  pulls the dotfiles repo with `git pull --ff-only`, auto-stashes local changes
+  before pulling and restores them after (pass `--no-stash` to abort on a dirty
+  tree instead), re-runs `link` to deploy any new files, and warns to stderr if
+  the binary is older than `[meta] krypt_min` in the config (#17). Post-update
+  hooks are deferred — a warning is printed when any are configured (#43).
+- `krypt_core::update` module: `UpdateOpts`, `UpdateReport`, `UpdateError`,
+  `update` — pure orchestration for the pull → version-check → link pipeline.
+
 - `krypt init [URL] [--from <url>] [--bare] [--force] [--repo-path <path>]`
   subcommand — clones a dotfiles repo into `${XDG_CONFIG}/krypt/repo` (or a
   custom path) and writes a tool config at `${XDG_CONFIG}/krypt/config.toml`

@@ -20,6 +20,8 @@
 //!   (issue #14)
 //! - [`init`]        — `krypt init` orchestration: clone + write tool config
 //!   (issue #14)
+//! - [`update`]      — `krypt update` orchestration: pull repo + re-deploy
+//!   (issue #17)
 //!
 //! Planned for Phase 1: `runner`.
 
@@ -34,6 +36,7 @@ pub mod init;
 pub mod manifest;
 pub mod paths;
 pub mod tool_config;
+pub mod update;
 
 pub use include::{expand_includes, load_with_includes};
 
