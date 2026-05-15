@@ -1,0 +1,135 @@
+name: release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
+
+jobs:
+  build:
+    name: ${{ matrix.target }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: x86_64-unknown-linux-gnu
+            os: ubuntu-latest
+            archive: tar.gz
+
+          - target: x86_64-unknown-linux-musl
+            os: ubuntu-latest
+            archive: tar.gz
+            apt_packages: musl-tools
+
+          - target: aarch64-unknown-linux-gnu
+            os: ubuntu-latest
+            archive: tar.gz
+            apt_packages: gcc-aarch64-linux-gnu
+            linker: aarch64-linux-gnu-gcc
+
+          - target: x86_64-apple-darwin
+            os: macos-latest
+            archive: tar.gz
+
+          - target: aarch64-apple-darwin
+            os: macos-latest
+            archive: tar.gz
+
+          - target: x86_64-pc-windows-msvc
+            os: windows-latest
+            archive: zip
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Install toolchain (from rust-toolchain.toml)
+        run: rustup show
+
+      - name: Add rustup target
+        run: rustup target add ${{ matrix.target }}
+
+      - name: Install apt packages
+        if: matrix.apt_packages
+        run: sudo apt-get update && sudo apt-get install -y ${{ matrix.apt_packages }}
+
+      - name: Configure cross-linker
+        if: matrix.linker
+        shell: bash
+        run: |
+          mkdir -p .cargo
+          cat >> .cargo/config.toml <<EOF
+          [target.${{ matrix.target }}]
+          linker = "${{ matrix.linker }}"
+          EOF
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: release-${{ matrix.target }}
+
+      - name: Build release
+        run: cargo build --release --target ${{ matrix.target }} --package files
+
+      - name: Strip binary (Unix)
+        if: runner.os != 'Windows'
+        shell: bash
+        run: |
+          # Skip strip when cross-compiling (host strip can't read foreign binaries)
+          if [ "${{ matrix.target }}" = "aarch64-unknown-linux-gnu" ]; then
+            echo "Skipping strip for cross-compiled aarch64"
+          else
+            strip target/${{ matrix.target }}/release/files || true
+          fi
+
+      - name: Package
+        shell: bash
+        run: |
+          name="files-${{ github.ref_name }}-${{ matrix.target }}"
+          mkdir -p dist
+          if [ "${{ matrix.archive }}" = "zip" ]; then
+            7z a "dist/${name}.zip" "./target/${{ matrix.target }}/release/files.exe"
+          else
+            tar -C "target/${{ matrix.target }}/release" -czf "dist/${name}.tar.gz" files
+          fi
+          ls -la dist/
+
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.target }}
+          path: dist/*
+          retention-days: 7
+
+  release:
+    name: Create GitHub Release
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Generate checksums
+        run: |
+          cd dist
+          sha256sum * > SHA256SUMS
+          cat SHA256SUMS
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*
+          generate_release_notes: true
+          draft: false
+          prerelease: ${{ contains(github.ref_name, '-') }}
