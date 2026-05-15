@@ -336,6 +336,13 @@ mod tests {
         root.join(".krypt.toml")
     }
 
+    /// Return the path as a forward-slash string safe to embed in a TOML
+    /// basic string. On Windows, `Path::display` emits backslashes which
+    /// TOML treats as escape sequences and rejects.
+    fn toml_path(p: &Path) -> String {
+        p.to_string_lossy().replace('\\', "/")
+    }
+
     fn opts(cfg: PathBuf, manifest: PathBuf, force: bool) -> DeployOpts {
         DeployOpts {
             config_path: cfg,
@@ -361,7 +368,7 @@ HOME = "{home}"
 src = "gitconfig"
 dst = "${{HOME}}/.gitconfig"
 "#,
-            home = home.path().display()
+            home = toml_path(home.path())
         );
         let cfg_path = synth_repo(repo.path(), &[("gitconfig", b"[user]\n")]);
         fs::write(&cfg_path, cfg_text).unwrap();
@@ -393,7 +400,7 @@ HOME = "{home}"
 src = "a"
 dst = "${{HOME}}/a"
 "#,
-            home = home.path().display()
+            home = toml_path(home.path())
         );
         let cfg_path = synth_repo(repo.path(), &[("a", b"v1")]);
         fs::write(&cfg_path, cfg_text).unwrap();
@@ -426,7 +433,7 @@ HOME = "{home}"
 src = "a"
 dst = "${{HOME}}/a"
 "#,
-            home = home.path().display()
+            home = toml_path(home.path())
         );
         let cfg_path = synth_repo(repo.path(), &[("a", b"repo wrote this")]);
         fs::write(&cfg_path, cfg_text).unwrap();
@@ -462,7 +469,7 @@ dst = "${{HOME}}/a"
 src = "b"
 dst = "${{HOME}}/b"
 "#,
-            home = home.path().display()
+            home = toml_path(home.path())
         );
         let cfg_path = synth_repo(repo.path(), &[("a", b"a1"), ("b", b"b1")]);
         fs::write(&cfg_path, cfg_text).unwrap();
@@ -505,7 +512,7 @@ HOME = "{home}"
 src = "a"
 dst = "${{HOME}}/a"
 "#,
-            home = home.path().display()
+            home = toml_path(home.path())
         );
         let cfg_path = synth_repo(repo.path(), &[("a", b"a1")]);
         fs::write(&cfg_path, cfg_text).unwrap();
@@ -545,7 +552,7 @@ dst = "${{HOME}}/x"
 src = "y/y"
 dst = "${{HOME}}/.config/y/y"
 "#,
-            home = home.path().display()
+            home = toml_path(home.path())
         );
         let cfg_path = synth_repo(repo.path(), &[("x", b"X"), ("y/y", b"Y")]);
         fs::write(&cfg_path, cfg_text).unwrap();
@@ -604,7 +611,7 @@ HOME = "{home}"
 src = "a"
 dst = "${{HOME}}/a"
 "#,
-            home = home.path().display()
+            home = toml_path(home.path())
         );
         let cfg_path = synth_repo(repo.path(), &[("a", b"v1")]);
         fs::write(&cfg_path, cfg_text).unwrap();
@@ -633,7 +640,7 @@ HOME = "{home}"
 src = "a"
 dst = "${{HOME}}/a"
 "#,
-            home = home.path().display()
+            home = toml_path(home.path())
         );
         let cfg_path = synth_repo(repo.path(), &[("a", b"v1")]);
         fs::write(&cfg_path, cfg_text).unwrap();
