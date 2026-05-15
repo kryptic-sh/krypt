@@ -11,6 +11,11 @@
 //! SSH-only, clone manually with `git clone` first and then run
 //! `krypt init --repo-path <path>` without a URL to write the tool config.
 
+// `InitError` wraps gix clone/checkout errors (already boxed) and
+// `ToolConfigError`; on Windows the combined enum exceeds clippy's 128-byte
+// threshold.  The variants are already as compact as the upstream types allow.
+#![allow(clippy::result_large_err)]
+
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};

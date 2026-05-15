@@ -5,6 +5,10 @@
 //! need to locate the repo without the user passing `--repo-path` each
 //! time.
 
+// `ToolConfigError` wraps `io::Error` + `PathBuf` and (boxed) TOML errors;
+// on Windows the combined enum exceeds clippy's 128-byte threshold.
+#![allow(clippy::result_large_err)]
+
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
@@ -34,14 +38,14 @@ pub enum ToolConfigError {
     Parse {
         /// Path of the bad file.
         path: PathBuf,
-        /// Underlying serde error.
+        /// Underlying serde error (boxed to keep the enum variant small).
         #[source]
-        source: toml::de::Error,
+        source: Box<toml::de::Error>,
     },
 
     /// TOML serialize failure.
     #[error("tool config encode: {0}")]
-    Encode(#[source] toml::ser::Error),
+    Encode(#[source] Box<toml::ser::Error>),
 
     /// XDG path resolution failed.
     #[error("resolving default config path: {0}")]
@@ -94,7 +98,7 @@ impl ToolConfig {
         };
         let cfg: ToolConfig = toml::from_str(&text).map_err(|source| ToolConfigError::Parse {
             path: path.to_path_buf(),
-            source,
+            source: Box::new(source),
         })?;
         Ok(Some(cfg))
     }
@@ -110,7 +114,8 @@ impl ToolConfig {
             fs::create_dir_all(parent).map_err(mk_io)?;
         }
 
-        let text = toml::to_string_pretty(self).map_err(ToolConfigError::Encode)?;
+        let text =
+            toml::to_string_pretty(self).map_err(|e| ToolConfigError::Encode(Box::new(e)))?;
 
         let mut tmp_name = path.file_name().unwrap_or_default().to_os_string();
         tmp_name.push(format!(".krypt-tmp-{}", std::process::id()));

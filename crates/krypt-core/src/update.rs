@@ -15,6 +15,11 @@
 //! SSH-based remote URLs will fail with a connection error from gix.  This
 //! limitation will be lifted once gitoxide ships SSH support.
 
+// `UpdateError` wraps gix errors (already boxed) and `ToolConfigError`;
+// on Windows the combined enum exceeds clippy's 128-byte threshold.
+// The variants are already as compact as the upstream types allow.
+#![allow(clippy::result_large_err)]
+
 use std::path::{Path, PathBuf};
 use std::sync::atomic::AtomicBool;
 
