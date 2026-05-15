@@ -10,26 +10,27 @@ patch bumps.
 
 ### Added
 
-- `krypt update [--dry-run] [--no-stash] [--skip-hooks] [--force]` subcommand —
-  pulls the dotfiles repo with `git pull --ff-only`, auto-stashes local changes
-  before pulling and restores them after (pass `--no-stash` to abort on a dirty
-  tree instead), re-runs `link` to deploy any new files, and warns to stderr if
-  the binary is older than `[meta] krypt_min` in the config (#17). Post-update
-  hooks are deferred — a warning is printed when any are configured (#43).
+- `krypt update [--dry-run] [--skip-hooks] [--force]` subcommand — pulls the
+  dotfiles repo via fast-forward using gix (no system `git` required), re-runs
+  `link` to deploy any new files, and warns to stderr if the binary is older
+  than `[meta] krypt_min` in the config (#17). Errors immediately on a dirty
+  working tree with an actionable message. Post-update hooks are deferred — a
+  warning is printed when any are configured (#43).
 - `krypt_core::update` module: `UpdateOpts`, `UpdateReport`, `UpdateError`,
   `update` — pure orchestration for the pull → version-check → link pipeline.
 
 - `krypt init [URL] [--from <url>] [--bare] [--force] [--repo-path <path>]`
   subcommand — clones a dotfiles repo into `${XDG_CONFIG}/krypt/repo` (or a
   custom path) and writes a tool config at `${XDG_CONFIG}/krypt/config.toml`
-  with `[repo] path` and optional `url`. `--bare` creates an empty `.krypt.toml`
-  stub instead of cloning. `--force` wipes an existing repo path before
-  proceeding (#14).
+  with `[repo] path` and optional `url`. Cloning uses gix with rustls — no
+  system `git` required, no OpenSSL. Only HTTPS URLs are supported (gix 0.83 has
+  no SSH transport). `--bare` creates an empty `.krypt.toml` stub instead of
+  cloning. `--force` wipes an existing repo path before proceeding (#14).
 - `krypt_core::tool_config` module: `ToolConfig`, `RepoConfig`,
   `ToolConfigError` — TOML-backed tool config with atomic save +
   `deny_unknown_fields`.
 - `krypt_core::init` module: `InitOpts`, `InitReport`, `InitError`, `init` —
-  pure orchestration that shells out to `git clone` (no `git2` dependency).
+  pure orchestration using gix for cloning (no system `git` dependency).
 - Deployment manifest at `${XDG_STATE}/krypt/manifest.json`: versioned JSON
   schema, atomic write, SHA-256 hashes per entry, and drift detection comparing
   recorded hashes to current destination contents (#13).
@@ -48,6 +49,11 @@ patch bumps.
 
 ### Changed
 
+- `krypt update` and `krypt init` now use
+  [gix (gitoxide)](https://github.com/Byron/gitoxide) as the sole git backend —
+  no system `git` binary, no `git2`/`libgit2`. Only HTTPS URLs are supported for
+  `krypt init --from <url>`; SSH URLs require a manual `git clone` first.
+  Auto-stash and `--no-stash` removed pending gix stash support (#44).
 - `copy::Report.written` is now a `Vec<Written>` carrying per-file
   `(src, dst, kind, hash_src, hash_dst)`. Old `usize` counts are available via
   `Report::written_count()`.

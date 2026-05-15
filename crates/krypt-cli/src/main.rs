@@ -121,9 +121,12 @@ enum Command {
 
     /// Pull the dotfiles repo and re-deploy.
     ///
-    /// Reads the tool config to find the repo, fast-forward-pulls it, then
-    /// re-runs `link`. Local changes are stashed before pulling and restored
-    /// after unless `--no-stash` is set.
+    /// Reads the tool config to find the repo, fast-forward-pulls it via gix
+    /// (HTTPS only — no SSH; see `krypt init --help`), then re-runs `link`.
+    ///
+    /// The working tree must be clean before running this command — commit,
+    /// stash, or discard any changes first.  Auto-stash support is planned
+    /// once gix gains a stash API.
     Update(UpdateArgs),
 }
 
@@ -160,10 +163,6 @@ struct UpdateArgs {
     /// Don't touch disk; pull the repo but pass dry_run to link.
     #[arg(long)]
     dry_run: bool,
-
-    /// Abort if the working tree is dirty instead of auto-stashing.
-    #[arg(long)]
-    no_stash: bool,
 
     /// (No-op) Accept the flag for forward compatibility when hooks are implemented.
     #[arg(long)]
@@ -399,7 +398,6 @@ fn cmd_update(args: UpdateArgs) -> Result<ExitCode> {
         config_path: args.config,
         manifest_path,
         dry_run: args.dry_run,
-        no_stash: args.no_stash,
         skip_hooks: args.skip_hooks,
         force: args.force,
     };
@@ -416,15 +414,9 @@ fn cmd_update(args: UpdateArgs) -> Result<ExitCode> {
                     n = report.hooks_skipped,
                 );
             }
-            if report.stashed {
-                println!("stashed local changes");
-            }
             println!("pull:  {}", if report.pulled { "ok" } else { "up to date" });
             println!("link:");
             print_link_report(&report.link, opts.dry_run);
-            if report.stashed {
-                println!("stash restored");
-            }
             Ok(if report.link.conflicts_skipped > 0 {
                 ExitCode::from(1)
             } else {
@@ -442,8 +434,7 @@ fn cmd_update(args: UpdateArgs) -> Result<ExitCode> {
             Ok(ExitCode::from(2))
         }
         Err(UpdateError::DirtyWorkingTree) => {
-            eprintln!("error: working tree is dirty");
-            eprintln!("hint:  remove --no-stash to let krypt stash your changes automatically");
+            eprintln!("error: {}", UpdateError::DirtyWorkingTree);
             Ok(ExitCode::from(1))
         }
         Err(e) => {

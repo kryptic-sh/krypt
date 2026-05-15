@@ -18,6 +18,13 @@ tracing    = { workspace = true }
 thiserror  = { workspace = true }
 glob       = { workspace = true }
 sha2       = { workspace = true }
+gix = { version = "0.83.0", features = [
+    "blocking-http-transport-reqwest-rust-tls",
+    "worktree-mutation",
+    "status",
+    "revision",
+] }
 
 [dev-dependencies]
-tempfile = { workspace = true }
+tempfile  = { workspace = true }
+smallvec  = "1"

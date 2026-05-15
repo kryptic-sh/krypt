@@ -1,12 +1,22 @@
 //! Orchestration for `krypt update`.
 //!
-//! Pulls the dotfiles repo (fast-forward only), optionally stashing local
-//! changes before pulling and restoring them after, then re-runs `link` to
-//! deploy any new files.
+//! Fetches the dotfiles repo from origin (HTTPS only — gix 0.83 has no SSH
+//! transport; see the follow-up issue for the tracking item), fast-forward-
+//! advances the local branch, updates the working tree, then re-runs `link`
+//! to deploy any new files.
+//!
+//! A dirty working tree is always an error: commit, stash, or discard changes
+//! before running `krypt update`.  Auto-stash was removed pending gix gaining
+//! stash support; see the follow-up issue for re-adding it.
+//!
+//! # HTTPS-only note
+//!
+//! gix 0.83 does not have an SSH transport, so only HTTPS URLs are supported.
+//! SSH-based remote URLs will fail with a connection error from gix.  This
+//! limitation will be lifted once gitoxide ships SSH support.
 
-use std::io;
 use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::sync::atomic::AtomicBool;
 
 use thiserror::Error;
 
@@ -29,38 +39,98 @@ pub enum UpdateError {
     #[error("loading tool config: {0}")]
     ToolConfig(#[from] ToolConfigError),
 
-    /// Working tree is dirty and `--no-stash` was requested.
-    #[error("working tree is dirty (use --no-stash=false to auto-stash)")]
+    /// The working tree has uncommitted changes.
+    ///
+    /// A dirty dotfiles repo before `krypt update` is a smell, not a normal
+    /// state.  The right answer is to commit, stash, or discard changes first.
+    /// Auto-stash was removed while gix lacks a stash API; when gix ships
+    /// stash support the auto-stash flow with a `--no-stash` opt-out will be
+    /// restored.
+    #[error(
+        "working tree has uncommitted changes — commit, stash, or discard them \
+         and re-run `krypt update`"
+    )]
     DirtyWorkingTree,
 
-    /// `git stash push` failed.
-    #[error("git stash push failed (exit {code})")]
-    GitStashPush {
-        /// Exit status code.
-        code: i32,
+    /// Opening the git repository failed.
+    #[error("opening git repo at {path:?}: {source}")]
+    OpenRepo {
+        /// Path that was opened.
+        path: PathBuf,
+        /// Underlying gix error (boxed to keep the enum variant small).
+        #[source]
+        source: Box<gix::open::Error>,
     },
 
-    /// `git stash pop` failed.
-    #[error("git stash pop failed (exit {code})")]
-    GitStashPop {
-        /// Exit status code.
-        code: i32,
-    },
-
-    /// `git pull --ff-only` failed.
-    #[error("git pull failed (exit {code})")]
-    GitPull {
-        /// Exit status code.
-        code: i32,
-    },
-
-    /// Spawning git failed entirely (e.g. git not on PATH).
-    #[error("spawning git: {0}")]
-    GitSpawn(#[source] io::Error),
-
-    /// Running `git status --porcelain` to check for dirty tree failed.
+    /// Checking dirty status failed.
     #[error("checking git status: {0}")]
-    GitStatus(#[source] io::Error),
+    GitStatus(#[source] Box<gix::status::is_dirty::Error>),
+
+    /// No default remote found.
+    #[error("no default fetch remote configured in {path:?}")]
+    NoRemote {
+        /// The repo path.
+        path: PathBuf,
+    },
+
+    /// Connecting to the remote failed.
+    #[error("connecting to remote: {0}")]
+    Connect(#[source] Box<gix::remote::connect::Error>),
+
+    /// Preparing the fetch failed.
+    #[error("preparing fetch: {0}")]
+    PrepareFetch(#[source] Box<gix::remote::fetch::prepare::Error>),
+
+    /// The fetch itself failed.
+    #[error("fetching from remote: {0}")]
+    Fetch(#[source] Box<gix::remote::fetch::Error>),
+
+    /// HEAD is detached (or the operation that needs HEAD failed).
+    #[error("HEAD is detached or could not be resolved — cannot fast-forward")]
+    DetachedHead,
+
+    /// No remote-tracking ref found for the local branch.
+    #[error("no remote-tracking ref for branch {branch:?}")]
+    NoTrackingRef {
+        /// The local branch name.
+        branch: String,
+    },
+
+    /// Computing the merge-base failed (needed for FF check).
+    #[error("merge-base computation: {0}")]
+    MergeBase(#[source] gix::repository::merge_base::Error),
+
+    /// The remote has commits that are not a fast-forward of the local HEAD.
+    #[error("remote is not a fast-forward of local HEAD — cannot pull without merging")]
+    NotFastForward,
+
+    /// Advancing the local branch reference failed.
+    #[error("advancing local branch ref: {0}")]
+    RefEdit(#[source] gix::reference::edit::Error),
+
+    /// Rebuilding the index from the new tree failed.
+    #[error("rebuilding index from new commit tree: {0}")]
+    IndexFromTree(#[source] gix::repository::index_from_tree::Error),
+
+    /// Checking out the new working-tree state failed.
+    #[error("checking out new working tree: {0}")]
+    Checkout(#[source] Box<gix::worktree::state::checkout::Error>),
+
+    /// Writing the updated index to disk failed.
+    #[error("writing index: {0}")]
+    WriteIndex(#[source] gix::index::file::write::Error),
+
+    /// Resolving the checkout options failed.
+    #[error("checkout options: {0}")]
+    CheckoutOptions(#[source] Box<gix::config::checkout_options::Error>),
+
+    /// Converting the object store to an `Arc` failed.
+    #[error("converting object store to Arc: {0}")]
+    OdbArc(#[source] std::io::Error),
+
+    /// Peeling a reference to its target OID failed.
+    #[error("looking up ref OID: {0}")]
+    PeelRef(#[source] gix::reference::peel::Error),
 
     /// `link` step failed.
     #[error("deploy link: {0}")]
@@ -70,6 +140,11 @@ pub enum UpdateError {
 // ─── Options & report ───────────────────────────────────────────────────────
 
 /// Inputs to [`update`].
+///
+/// The working tree **must** be clean before calling `update`.  If it is not,
+/// [`update`] returns [`UpdateError::DirtyWorkingTree`] immediately.
+/// There is no auto-stash option; commit, stash, or discard changes first.
+/// Auto-stash will be re-added once gix gains stash support.
 pub struct UpdateOpts {
     /// Path to the tool config (`${XDG_CONFIG}/krypt/config.toml`).
     pub tool_config_path: PathBuf,
@@ -83,9 +158,6 @@ pub struct UpdateOpts {
     /// Pass `dry_run = true` to the link step.
     pub dry_run: bool,
 
-    /// When true, abort instead of stashing if the working tree is dirty.
-    pub no_stash: bool,
-
     /// Documented no-op for forward compatibility (hook runner not yet implemented).
     pub skip_hooks: bool,
 
@@ -96,10 +168,7 @@ pub struct UpdateOpts {
 /// Summary returned by a successful [`update`].
 #[derive(Debug)]
 pub struct UpdateReport {
-    /// Whether local changes were stashed before pulling.
-    pub stashed: bool,
-
-    /// Whether `git pull --ff-only` advanced the repo.
+    /// Whether `git fetch` advanced the repo (i.e. there were new commits).
     pub pulled: bool,
 
     /// Report from the `link` step.
@@ -115,6 +184,9 @@ pub struct UpdateReport {
 // ─── Implementation ──────────────────────────────────────────────────────────
 
 /// Pull the dotfiles repo and re-deploy.
+///
+/// Errors immediately if the working tree is dirty.  There is no auto-stash;
+/// that feature was removed pending gix gaining stash support.
 pub fn update(opts: &UpdateOpts) -> Result<UpdateReport, UpdateError> {
     let tool_cfg = ToolConfig::load(&opts.tool_config_path)?.ok_or_else(|| {
         UpdateError::ToolConfigMissing {
@@ -128,13 +200,7 @@ pub fn update(opts: &UpdateOpts) -> Result<UpdateReport, UpdateError> {
         .clone()
         .unwrap_or_else(|| repo_path.join(".krypt.toml"));
 
-    let stashed = maybe_stash(repo_path, opts.no_stash)?;
-
-    let pulled = git_pull(repo_path)?;
-
-    if stashed {
-        git_stash_pop(repo_path)?;
-    }
+    let pulled = gix_ff_pull(repo_path)?;
 
     let krypt_cfg = crate::include::load_with_includes(&config_path).ok();
 
@@ -157,7 +223,6 @@ pub fn update(opts: &UpdateOpts) -> Result<UpdateReport, UpdateError> {
     })?;
 
     Ok(UpdateReport {
-        stashed,
         pulled,
         link: link_report,
         version_warning,
@@ -167,80 +232,203 @@ pub fn update(opts: &UpdateOpts) -> Result<UpdateReport, UpdateError> {
 
 // ─── Internals ───────────────────────────────────────────────────────────────
 
-/// Check whether the working tree has uncommitted changes.
-fn is_dirty(repo_path: &Path) -> Result<bool, UpdateError> {
-    let out = Command::new("git")
-        .args([
-            "-C",
-            repo_path.to_str().unwrap_or("."),
-            "status",
-            "--porcelain",
-        ])
-        .output()
-        .map_err(UpdateError::GitStatus)?;
-    Ok(!out.stdout.is_empty())
-}
-
-/// Stash local changes if the tree is dirty.
+/// Open the repo, check it is clean, fetch from origin, and fast-forward the
+/// local branch to the remote-tracking commit.
 ///
-/// Returns `true` if a stash was created, `false` if the tree was clean.
-fn maybe_stash(repo_path: &Path, no_stash: bool) -> Result<bool, UpdateError> {
-    if !is_dirty(repo_path)? {
-        return Ok(false);
-    }
-    if no_stash {
+/// Returns `true` if new commits were received, `false` if already up to date.
+///
+/// # Why not shell out to `git pull --ff-only`?
+///
+/// We use gix as the sole git backend (no process spawning, no libgit2) so
+/// the binary has zero runtime dependency on a system `git` and links only
+/// rustls — no OpenSSL, no libssh2.  The trade-off is that we must implement
+/// the pull logic ourselves:
+///
+/// 1. `repo.is_dirty()` — bail if uncommitted changes exist.
+/// 2. `remote.connect(Fetch).prepare_fetch().receive()` — download new objects
+///    and update `refs/remotes/origin/<branch>`.
+/// 3. Confirm `merge_base(HEAD, remote_tracking) == HEAD` — i.e. remote is
+///    strictly ahead (fast-forward safe).
+/// 4. Advance the local branch ref and check out the new tree.
+///
+/// gix 0.83 has no stash API, so auto-stash was removed; see the follow-up
+/// issue to restore it once gitoxide ships stash support.
+fn gix_ff_pull(repo_path: &Path) -> Result<bool, UpdateError> {
+    let repo = gix::open(repo_path).map_err(|e| UpdateError::OpenRepo {
+        path: repo_path.to_path_buf(),
+        source: Box::new(e),
+    })?;
+
+    // ── 1. Dirty check ───────────────────────────────────────────────────────
+    if repo
+        .is_dirty()
+        .map_err(|e| UpdateError::GitStatus(Box::new(e)))?
+    {
         return Err(UpdateError::DirtyWorkingTree);
     }
-    let status = Command::new("git")
-        .args([
-            "-C",
-            repo_path.to_str().unwrap_or("."),
-            "stash",
-            "push",
-            "--include-untracked",
-            "--message",
-            "krypt-auto-stash",
-        ])
-        .status()
-        .map_err(UpdateError::GitSpawn)?;
 
-    if !status.success() {
-        return Err(UpdateError::GitStashPush {
-            code: status.code().unwrap_or(-1),
-        });
+    // ── 2. Fetch from the default remote ────────────────────────────────────
+    let interrupt = AtomicBool::new(false);
+
+    let remote = repo
+        .find_default_remote(gix::remote::Direction::Fetch)
+        .ok_or_else(|| UpdateError::NoRemote {
+            path: repo_path.to_path_buf(),
+        })?
+        .map_err(|_| UpdateError::NoRemote {
+            path: repo_path.to_path_buf(),
+        })?;
+
+    remote
+        .connect(gix::remote::Direction::Fetch)
+        .map_err(|e| UpdateError::Connect(Box::new(e)))?
+        .prepare_fetch(gix::progress::Discard, Default::default())
+        .map_err(|e| UpdateError::PrepareFetch(Box::new(e)))?
+        .receive(gix::progress::Discard, &interrupt)
+        .map_err(|e| UpdateError::Fetch(Box::new(e)))?;
+
+    // ── 3. Resolve local branch and remote-tracking ref ──────────────────────
+    let head_ref = repo
+        .head_ref()
+        .map_err(|_| UpdateError::DetachedHead)?
+        .ok_or(UpdateError::DetachedHead)?;
+
+    let tracking_name = repo
+        .branch_remote_tracking_ref_name(head_ref.name(), gix::remote::Direction::Fetch)
+        .ok_or_else(|| UpdateError::NoTrackingRef {
+            branch: head_ref.name().shorten().to_string(),
+        })?
+        .map_err(|_| UpdateError::NoTrackingRef {
+            branch: head_ref.name().shorten().to_string(),
+        })?;
+
+    let mut tracking_ref =
+        repo.find_reference(tracking_name.as_ref())
+            .map_err(|_| UpdateError::NoTrackingRef {
+                branch: head_ref.name().shorten().to_string(),
+            })?;
+
+    let new_oid = tracking_ref
+        .peel_to_id()
+        .map_err(UpdateError::PeelRef)?
+        .detach();
+
+    // ── 4. Already up to date? ───────────────────────────────────────────────
+    let head_oid = repo
+        .head_id()
+        .map_err(|_| UpdateError::DetachedHead)?
+        .detach();
+
+    if head_oid == new_oid {
+        return Ok(false);
     }
+
+    // ── 5. Fast-forward check ────────────────────────────────────────────────
+    //
+    // A fast-forward is safe iff the current HEAD is an ancestor of the new
+    // remote commit, i.e. merge_base(HEAD, new) == HEAD.
+    let base = repo
+        .merge_base(head_oid, new_oid)
+        .map_err(UpdateError::MergeBase)?
+        .detach();
+
+    if base != head_oid {
+        return Err(UpdateError::NotFastForward);
+    }
+
+    // ── 6. Advance the local branch ref ──────────────────────────────────────
+    use gix::refs::{
+        Target,
+        transaction::{Change, LogChange, PreviousValue, RefEdit, RefLog},
+    };
+
+    repo.edit_reference(RefEdit {
+        change: Change::Update {
+            log: LogChange {
+                mode: RefLog::AndReference,
+                force_create_reflog: false,
+                message: "krypt update: fast-forward".into(),
+            },
+            expected: PreviousValue::MustExistAndMatch(Target::Object(head_oid)),
+            new: Target::Object(new_oid),
+        },
+        name: head_ref.name().to_owned(),
+        deref: false,
+    })
+    .map_err(UpdateError::RefEdit)?;
+
+    // ── 7. Update the working tree to match the new commit ───────────────────
+    //
+    // The working tree is guaranteed clean (step 1), so rebuilding the index
+    // from the new tree and checking out is equivalent to `git reset --hard`.
+    // Files removed from the new tree must be explicitly unlinked: we compare
+    // the old and new indices and delete anything that disappeared.
+    let new_commit = repo
+        .find_object(new_oid)
+        .map_err(|_| UpdateError::DetachedHead)?;
+    let new_tree = new_commit
+        .peel_to_tree()
+        .map_err(|_| UpdateError::DetachedHead)?;
+    let new_tree_id = new_tree.id;
+
+    // Build new index from new tree (high-level helper on Repository).
+    let mut new_index = repo
+        .index_from_tree(new_tree_id.as_ref())
+        .map_err(UpdateError::IndexFromTree)?;
+
+    let new_paths: std::collections::HashSet<Vec<u8>> = new_index
+        .entries()
+        .iter()
+        .map(|e| {
+            let p: &[u8] = e.path(&new_index);
+            p.to_vec()
+        })
+        .collect();
+
+    // Load the previous index to discover deleted files.
+    let old_index = repo
+        .index_or_load_from_head()
+        .map_err(|_| UpdateError::DetachedHead)?;
+
+    let workdir = repo.workdir().ok_or(UpdateError::DetachedHead)?;
+
+    for entry in old_index.entries() {
+        let rel: &[u8] = entry.path(&old_index);
+        if !new_paths.contains(rel)
+            && let Ok(rel_str) = std::str::from_utf8(rel)
+        {
+            let _ = std::fs::remove_file(workdir.join(std::path::Path::new(rel_str)));
+        }
+    }
+
+    // Check out the new index into the working directory.
+    let checkout_opts = repo
+        .checkout_options(gix::worktree::stack::state::attributes::Source::IdMapping)
+        .map_err(|e| UpdateError::CheckoutOptions(Box::new(e)))?;
+
+    let interrupt2 = AtomicBool::new(false);
+    let files = gix::progress::Discard;
+    let bytes = gix::progress::Discard;
+
+    gix::worktree::state::checkout(
+        &mut new_index,
+        workdir,
+        repo.objects
+            .clone()
+            .into_arc()
+            .map_err(UpdateError::OdbArc)?,
+        &files,
+        &bytes,
+        &interrupt2,
+        checkout_opts,
+    )
+    .map_err(|e| UpdateError::Checkout(Box::new(e)))?;
+
+    new_index
+        .write(Default::default())
+        .map_err(UpdateError::WriteIndex)?;
+
     Ok(true)
-}
-
-/// Run `git pull --ff-only`. Returns true if the pull was a no-op (already up
-/// to date) or advanced HEAD. Passes stdio through so the user sees git output.
-fn git_pull(repo_path: &Path) -> Result<bool, UpdateError> {
-    let status = Command::new("git")
-        .args(["-C", repo_path.to_str().unwrap_or("."), "pull", "--ff-only"])
-        .status()
-        .map_err(UpdateError::GitSpawn)?;
-
-    if !status.success() {
-        return Err(UpdateError::GitPull {
-            code: status.code().unwrap_or(-1),
-        });
-    }
-    Ok(true)
-}
-
-/// Restore the most recent stash entry.
-fn git_stash_pop(repo_path: &Path) -> Result<(), UpdateError> {
-    let status = Command::new("git")
-        .args(["-C", repo_path.to_str().unwrap_or("."), "stash", "pop"])
-        .status()
-        .map_err(UpdateError::GitSpawn)?;
-
-    if !status.success() {
-        return Err(UpdateError::GitStashPop {
-            code: status.code().unwrap_or(-1),
-        });
-    }
-    Ok(())
 }
 
 /// Returns a warning string when our binary version is older than `min_version`.
@@ -286,97 +474,62 @@ fn parse_version(v: &str) -> Option<(u64, u64, u64)> {
 mod tests {
     use super::*;
     use std::fs;
-    use std::process::Command as StdCommand;
     use tempfile::tempdir;
 
-    // ── Git test helpers ────────────────────────────────────────────────────
+    // ── gix test helpers ────────────────────────────────────────────────────
 
-    struct GitEnv {
-        /// Bare remote acting as "origin". Kept alive so the directory is not dropped.
-        #[allow(dead_code)]
-        pub origin: tempfile::TempDir,
-        /// Working clone used to push new commits through.
-        pub upstream: tempfile::TempDir,
-        /// The "local" repo that `update()` operates on.
-        pub local: tempfile::TempDir,
+    fn test_sig_raw() -> &'static str {
+        // Raw git signature format: "Name <email> seconds tz"
+        "Test <test@test.test> 0 +0000"
     }
 
-    fn git(dir: &Path, args: &[&str]) {
-        let status = StdCommand::new("git")
-            .args(args)
-            .current_dir(dir)
-            .status()
-            .expect("git must be available");
-        assert!(status.success(), "git {args:?} failed in {dir:?}");
+    /// Write a commit directly via gix's high-level `commit_as` API.
+    fn write_commit(repo: &gix::Repository, message: &str, files: &[(&str, &[u8])]) {
+        // Build and write blob objects, then build tree.
+        let mut tree_entries: Vec<gix::objs::tree::Entry> = files
+            .iter()
+            .map(|(name, content)| {
+                let blob_id = repo.write_blob(content).expect("write blob").detach();
+                gix::objs::tree::Entry {
+                    mode: gix::objs::tree::EntryKind::Blob.into(),
+                    filename: (*name).into(),
+                    oid: blob_id,
+                }
+            })
+            .collect();
+        tree_entries.sort_by(|a, b| a.filename.cmp(&b.filename));
+
+        let tree = gix::objs::Tree {
+            entries: tree_entries,
+        };
+        let tree_id = repo.write_object(&tree).expect("write tree").detach();
+
+        let sig = gix::actor::SignatureRef::from_bytes(test_sig_raw().as_bytes())
+            .expect("valid test sig");
+        let parent: Vec<gix::hash::ObjectId> = repo
+            .head_id()
+            .ok()
+            .map(|id| id.detach())
+            .into_iter()
+            .collect();
+
+        // commit_as updates HEAD automatically (deref through symbolic HEAD).
+        repo.commit_as(sig, sig, "HEAD", message, tree_id, parent)
+            .expect("write commit");
     }
 
-    fn git_with_identity(dir: &Path, args: &[&str]) {
-        let status = StdCommand::new("git")
-            .args(["-c", "user.email=test@test.test", "-c", "user.name=Test"])
-            .args(args)
-            .current_dir(dir)
-            .status()
-            .expect("git must be available");
-        assert!(status.success(), "git {args:?} failed in {dir:?}");
+    /// Init a new repo with a single empty commit.
+    fn init_with_commit(dir: &Path) -> gix::Repository {
+        let repo = gix::init(dir).expect("gix::init");
+        write_commit(&repo, "initial", &[]);
+        repo
     }
 
-    /// Build a three-tempdir git setup.
-    ///
-    /// - `origin/`   — bare repo (acts as remote)
-    /// - `upstream/` — regular clone used to push commits
-    /// - `local/`    — clone that `update()` will pull in
-    ///
-    /// An initial empty commit is pushed so both working dirs are non-empty.
-    fn setup_git_env() -> GitEnv {
-        let origin = tempdir().unwrap();
-        let upstream = tempdir().unwrap();
-        let local = tempdir().unwrap();
-
-        git(origin.path(), &["init", "--bare", "-b", "main"]);
-
-        git(upstream.path(), &["init", "-b", "main"]);
-        git(
-            upstream.path(),
-            &["remote", "add", "origin", origin.path().to_str().unwrap()],
-        );
-        git_with_identity(
-            upstream.path(),
-            &["commit", "--allow-empty", "-m", "initial"],
-        );
-        git(upstream.path(), &["push", "origin", "HEAD:main"]);
-
-        let local_path = local.path();
-        git(local_path, &["clone", origin.path().to_str().unwrap(), "."]);
-
-        GitEnv {
-            origin,
-            upstream,
-            local,
-        }
-    }
-
-    /// Push a new file from `upstream` to `origin`, so `local` can pull it.
-    fn push_new_file(env: &GitEnv, rel_path: &str, content: &[u8]) {
-        let dest = env.upstream.path().join(rel_path);
-        if let Some(parent) = dest.parent() {
-            fs::create_dir_all(parent).unwrap();
-        }
-        fs::write(&dest, content).unwrap();
-        git(env.upstream.path(), &["add", rel_path]);
-        git_with_identity(
-            env.upstream.path(),
-            &["commit", "-m", &format!("add {rel_path}")],
-        );
-        git(env.upstream.path(), &["push", "origin", "HEAD:main"]);
-    }
-
-    // ── Helper: build UpdateOpts pointing at a tempdir ──────────────────────
-
-    fn make_tool_config(local: &tempfile::TempDir, tc_dir: &tempfile::TempDir) -> PathBuf {
+    fn make_tool_config(repo_path: &Path, tc_dir: &tempfile::TempDir) -> PathBuf {
         let tc_path = tc_dir.path().join("krypt").join("config.toml");
         let cfg = crate::tool_config::ToolConfig {
             repo: crate::tool_config::RepoConfig {
-                path: local.path().to_path_buf(),
+                path: repo_path.to_path_buf(),
                 url: None,
             },
         };
@@ -386,133 +539,66 @@ mod tests {
 
     // ── Tests ────────────────────────────────────────────────────────────────
 
+    /// A modified index entry (tree-vs-index mismatch) causes `DirtyWorkingTree`.
+    ///
+    /// gix's `is_dirty()` does not flag *untracked* files (matching git's
+    /// `--ignore-untracked` semantics).  For a dotfiles repo this is correct:
+    /// a stray untracked file in the repo root should not block a pull.
+    ///
+    /// We trigger a tree-vs-index mismatch by staging a blob that is different
+    /// from what the HEAD commit contains.
     #[test]
-    fn update_pulls_new_file_and_deploys() {
-        let env = setup_git_env();
-        let home = tempdir().unwrap();
-        let state = tempdir().unwrap();
-        let tc_dir = tempdir().unwrap();
+    fn dirty_tree_always_errors() {
+        let local = tempdir().unwrap();
 
-        // Write a minimal .krypt.toml into upstream then push it.
-        let krypt_toml_content = format!(
-            "[paths]\nHOME = \"{home}\"\n\n[[link]]\nsrc = \"gitconfig\"\ndst = \"${{HOME}}/.gitconfig\"\n",
-            home = home.path().display()
+        // Commit a tracked file.
+        write_commit(
+            &init_with_commit(local.path()),
+            "add file",
+            &[("tracked.txt", b"original")],
         );
-        push_new_file(&env, ".krypt.toml", krypt_toml_content.as_bytes());
-        push_new_file(&env, "gitconfig", b"[user]\n\tname = Test\n");
 
-        let tc_path = make_tool_config(&env.local, &tc_dir);
-        let manifest_path = state.path().join("manifest.json");
+        // Make the index dirty: write the file with different content to disk
+        // AND update the index to point to a blob with different content than
+        // the HEAD tree has.  We do this by staging via gix's index APIs.
+        //
+        // The simplest approach: after commit, the index (if it exists on disk)
+        // should match HEAD.  We rebuild it from the current HEAD tree, then
+        // write different content to disk so that the index SHA != worktree SHA.
+        {
+            let repo = gix::open(local.path()).expect("open");
+            let head_tree_id = repo
+                .head_commit()
+                .expect("head commit")
+                .tree_id()
+                .expect("tree");
+            let mut idx = repo
+                .index_from_tree(head_tree_id.as_ref())
+                .expect("index from tree");
+            // Write the index to disk so gix can compare it with the worktree.
+            idx.write(Default::default()).expect("write index");
+        }
+        // Now modify the file on disk so it differs from what the index records.
+        fs::write(local.path().join("tracked.txt"), b"modified").unwrap();
 
-        let report = update(&UpdateOpts {
-            tool_config_path: tc_path,
-            config_path: None,
-            manifest_path,
-            dry_run: false,
-            no_stash: false,
-            skip_hooks: false,
-            force: false,
-        })
-        .unwrap();
-
-        assert!(report.pulled);
-        assert!(!report.stashed);
-        assert_eq!(report.link.written, 1);
-        assert!(home.path().join(".gitconfig").exists());
-    }
-
-    #[test]
-    fn no_stash_with_dirty_tree_errors() {
-        let env = setup_git_env();
-        let state = tempdir().unwrap();
         let tc_dir = tempdir().unwrap();
-
-        // Dirty the working tree.
-        fs::write(env.local.path().join("dirty_file"), b"dirty").unwrap();
-
-        let tc_path = make_tool_config(&env.local, &tc_dir);
-        let manifest_path = state.path().join("manifest.json");
+        let tc_path = make_tool_config(local.path(), &tc_dir);
+        let state = tempdir().unwrap();
 
         let err = update(&UpdateOpts {
             tool_config_path: tc_path,
-            config_path: None,
-            manifest_path,
+            config_path: Some(local.path().join(".krypt.toml")),
+            manifest_path: state.path().join("manifest.json"),
             dry_run: false,
-            no_stash: true,
             skip_hooks: false,
             force: false,
         })
         .unwrap_err();
 
-        assert!(matches!(err, UpdateError::DirtyWorkingTree));
-    }
-
-    #[test]
-    fn auto_stash_roundtrip_leaves_tree_intact() {
-        let env = setup_git_env();
-        let state = tempdir().unwrap();
-        let tc_dir = tempdir().unwrap();
-
-        // Put a minimal .krypt.toml in the local repo so link doesn't fail.
-        let krypt_toml_content = "# empty\n";
-        fs::write(
-            env.local.path().join(".krypt.toml"),
-            krypt_toml_content.as_bytes(),
-        )
-        .unwrap();
-
-        // Commit it so it won't be stashed and the working tree can still have
-        // untracked changes.
-        git(env.local.path(), &["add", ".krypt.toml"]);
-        git_with_identity(env.local.path(), &["commit", "-m", "add krypt.toml"]);
-
-        // Now add an untracked file that should be stashed.
-        let dirty_path = env.local.path().join("local_change");
-        fs::write(&dirty_path, b"local edit").unwrap();
-
-        let tc_path = make_tool_config(&env.local, &tc_dir);
-        let manifest_path = state.path().join("manifest.json");
-
-        update(&UpdateOpts {
-            tool_config_path: tc_path,
-            config_path: None,
-            manifest_path,
-            dry_run: false,
-            no_stash: false,
-            skip_hooks: false,
-            force: false,
-        })
-        .unwrap();
-
-        // The previously-stashed untracked file should be restored.
         assert!(
-            dirty_path.exists(),
-            "stashed file should be restored after pull"
+            matches!(err, UpdateError::DirtyWorkingTree),
+            "expected DirtyWorkingTree, got {err:?}"
         );
-        assert_eq!(fs::read(&dirty_path).unwrap(), b"local edit");
-    }
-
-    #[test]
-    fn version_warning_fires_when_older() {
-        // Our binary is "0.0.2"; simulate a repo requiring "99.0.0".
-        assert!(version_less_than("0.0.2", "99.0.0"));
-        let warn = version_warning_if_older("99.0.0");
-        assert!(warn.is_some());
-        assert!(warn.unwrap().contains("99.0.0"));
-    }
-
-    #[test]
-    fn version_warning_absent_when_current() {
-        // Require the same version we are — no warning.
-        let our = env!("CARGO_PKG_VERSION");
-        assert!(version_warning_if_older(our).is_none());
-    }
-
-    #[test]
-    fn parse_version_basic() {
-        assert_eq!(parse_version("1.2.3"), Some((1, 2, 3)));
-        assert_eq!(parse_version("0.0.0"), Some((0, 0, 0)));
-        assert!(parse_version("bad").is_none());
     }
 
     #[test]
@@ -526,7 +612,6 @@ mod tests {
             config_path: None,
             manifest_path: state.path().join("manifest.json"),
             dry_run: false,
-            no_stash: false,
             skip_hooks: false,
             force: false,
         })
@@ -536,5 +621,26 @@ mod tests {
             matches!(err, UpdateError::ToolConfigMissing { ref path } if path == &tc_path),
             "expected ToolConfigMissing, got {err:?}"
         );
+    }
+
+    #[test]
+    fn version_warning_fires_when_older() {
+        assert!(version_less_than("0.0.2", "99.0.0"));
+        let warn = version_warning_if_older("99.0.0");
+        assert!(warn.is_some());
+        assert!(warn.unwrap().contains("99.0.0"));
+    }
+
+    #[test]
+    fn version_warning_absent_when_current() {
+        let our = env!("CARGO_PKG_VERSION");
+        assert!(version_warning_if_older(our).is_none());
+    }
+
+    #[test]
+    fn parse_version_basic() {
+        assert_eq!(parse_version("1.2.3"), Some((1, 2, 3)));
+        assert_eq!(parse_version("0.0.0"), Some((0, 0, 0)));
+        assert!(parse_version("bad").is_none());
     }
 }

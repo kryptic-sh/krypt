@@ -2,11 +2,19 @@
 //!
 //! Clones a remote dotfiles repo (or creates an empty local stub) into
 //! the configured repo path, then writes the tool config.
+//!
+//! # HTTPS-only note
+//!
+//! Cloning uses gix's blocking HTTP transport with rustls — no system `git`
+//! required, no OpenSSL, no libssh2.  The trade-off is that **only HTTPS
+//! URLs are supported** (gix 0.83 has no SSH transport).  If your remote is
+//! SSH-only, clone manually with `git clone` first and then run
+//! `krypt init --repo-path <path>` without a URL to write the tool config.
 
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::sync::atomic::AtomicBool;
 
 use thiserror::Error;
 
@@ -28,18 +36,35 @@ pub enum InitError {
         path: PathBuf,
     },
 
-    /// `git clone` exited non-zero. Output is inherited from the parent,
-    /// so the user has already seen git's error on stderr — we just
-    /// surface the exit code.
-    #[error("git clone failed (exit {code})")]
-    GitClone {
-        /// Exit status code.
-        code: i32,
+    /// `gix::prepare_clone` failed.
+    #[error("preparing clone of {url:?}: {source}")]
+    GixClonePrepare {
+        /// The URL that was cloned.
+        url: String,
+        /// Underlying error (boxed to keep the enum variant small).
+        #[source]
+        source: Box<gix::clone::Error>,
     },
 
-    /// Spawning git failed entirely (e.g. git not on PATH).
-    #[error("spawning git: {0}")]
-    GitSpawn(#[source] io::Error),
+    /// The fetch step of the clone failed.
+    #[error("fetching during clone of {url:?}: {source}")]
+    GixCloneFetch {
+        /// The URL that was cloned.
+        url: String,
+        /// Underlying error (boxed to keep the enum variant small).
+        #[source]
+        source: Box<gix::clone::fetch::Error>,
+    },
+
+    /// The checkout step after cloning failed.
+    #[error("checking out clone of {url:?}: {source}")]
+    GixCloneCheckout {
+        /// The URL that was cloned.
+        url: String,
+        /// Underlying error (boxed to keep the enum variant small).
+        #[source]
+        source: Box<gix::clone::checkout::main_worktree::Error>,
+    },
 
     /// I/O failure outside git (directory creation, file write, …).
     #[error("io: {0}")]
@@ -54,7 +79,10 @@ pub enum InitError {
 
 /// Inputs to [`init`].
 pub struct InitOpts {
-    /// Remote URL to clone from. `None` when `--bare`.
+    /// Remote HTTPS URL to clone from.  `None` when `--bare`.
+    ///
+    /// Only HTTPS URLs are supported by the gix transport used here.
+    /// SSH URLs will fail — see the module-level note.
     pub url: Option<String>,
     /// Where to put the repo on disk.
     pub repo_path: PathBuf,
@@ -88,7 +116,7 @@ pub fn init(opts: &InitOpts) -> Result<InitReport, InitError> {
     if opts.bare {
         init_bare(&opts.repo_path)?;
     } else {
-        git_clone(opts.url.as_deref().unwrap(), &opts.repo_path)?;
+        gix_clone(opts.url.as_deref().unwrap(), &opts.repo_path)?;
     }
 
     let cfg = ToolConfig {
@@ -126,19 +154,32 @@ fn prepare_repo_path(path: &Path, force: bool) -> Result<(), InitError> {
     Ok(())
 }
 
-fn git_clone(url: &str, dest: &Path) -> Result<(), InitError> {
-    let status = Command::new("git")
-        .arg("clone")
-        .arg(url)
-        .arg(dest)
-        .status()
-        .map_err(InitError::GitSpawn)?;
+/// Clone `url` into `dest` using gix's blocking HTTP/rustls transport.
+///
+/// No system `git` binary is required.  Only HTTPS URLs are supported —
+/// gix 0.83 has no SSH transport.
+fn gix_clone(url: &str, dest: &Path) -> Result<(), InitError> {
+    let interrupt = AtomicBool::new(false);
 
-    if !status.success() {
-        return Err(InitError::GitClone {
-            code: status.code().unwrap_or(-1),
-        });
-    }
+    let (mut checkout, _fetch_outcome) = gix::prepare_clone(url, dest)
+        .map_err(|e| InitError::GixClonePrepare {
+            url: url.to_owned(),
+            source: Box::new(e),
+        })?
+        .fetch_then_checkout(gix::progress::Discard, &interrupt)
+        .map_err(|e| InitError::GixCloneFetch {
+            url: url.to_owned(),
+            source: Box::new(e),
+        })?;
+
+    checkout
+        .main_worktree(gix::progress::Discard, &interrupt)
+        .map_err(|e| InitError::GixCloneCheckout {
+            url: url.to_owned(),
+            source: Box::new(e),
+        })?;
+    // (Repository and checkout outcome returned; we only need the side-effect.)
+
     Ok(())
 }
 
@@ -164,7 +205,6 @@ fn init_bare(path: &Path) -> Result<(), InitError> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::process::Command as StdCommand;
     use tempfile::tempdir;
 
     fn tool_config_path(dir: &tempfile::TempDir) -> PathBuf {
@@ -248,22 +288,23 @@ mod tests {
         assert!(repo_path.join(".krypt.toml").exists());
     }
 
+    /// Clone from a local file-path URL using gix.
+    ///
+    /// We need a non-empty commit in the origin so that gix has something to
+    /// check out — an empty bare repo will succeed but produce an empty clone.
     #[test]
-    fn clone_from_local_bare_repo() {
+    fn clone_from_local_file_url() {
         let origin_dir = tempdir().unwrap();
         let repo_dir = tempdir().unwrap();
         let cfg_dir = tempdir().unwrap();
 
-        // Create a local bare repo to clone from.
-        let status = StdCommand::new("git")
-            .args(["init", "--bare", origin_dir.path().to_str().unwrap()])
-            .output()
-            .expect("git must be available");
-        assert!(status.status.success(), "git init --bare failed");
+        // Create a local non-bare repo with an initial commit using gix APIs.
+        let origin_repo = gix::init(origin_dir.path()).expect("gix::init origin");
+        write_initial_gix_commit(&origin_repo);
 
+        let url = format!("file://{}", origin_dir.path().display());
         let repo_path = repo_dir.path().join("repo");
         let tc_path = tool_config_path(&cfg_dir);
-        let url = origin_dir.path().to_str().unwrap().to_string();
 
         init(&InitOpts {
             url: Some(url.clone()),
@@ -278,5 +319,19 @@ mod tests {
         let tc = ToolConfig::load(&tc_path).unwrap().unwrap();
         assert_eq!(tc.repo.path, repo_path);
         assert_eq!(tc.repo.url.as_deref(), Some(url.as_str()));
+    }
+
+    /// Write an initial empty commit to a freshly initialised gix repository.
+    fn write_initial_gix_commit(repo: &gix::Repository) {
+        let sig = gix::actor::SignatureRef::from_bytes(b"Test <test@test.test> 0 +0000")
+            .expect("valid sig");
+
+        let empty_tree = gix::objs::Tree::empty();
+        let tree_id = repo.write_object(&empty_tree).expect("write tree").detach();
+
+        // commit_as creates the commit and advances HEAD.
+        let parents: Vec<gix::hash::ObjectId> = vec![];
+        repo.commit_as(sig, sig, "HEAD", "initial", tree_id, parents)
+            .expect("write initial commit");
     }
 }
