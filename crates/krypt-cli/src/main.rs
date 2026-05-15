@@ -1,6 +1,6 @@
-//! `files` — cross-platform dotfiles manager.
+//! `krypt` — cross-platform dotfiles manager.
 //!
-//! This is the CLI entrypoint. Real logic lives in `files-core`. This crate
+//! This is the CLI entrypoint. Real logic lives in `krypt-core`. This crate
 //! is intentionally thin: clap wiring + delegation.
 
 use clap::{Parser, Subcommand};
@@ -8,7 +8,7 @@ use color_eyre::Result;
 
 #[derive(Parser, Debug)]
 #[command(
-    name    = "files",
+    name    = "krypt",
     version,
     about   = "Cross-platform dotfiles manager.",
     long_about = None,
@@ -38,10 +38,10 @@ fn main() -> Result<()> {
 
     match cli.command {
         Some(Command::Version) | None => {
-            println!("files {}", env!("CARGO_PKG_VERSION"));
-            println!("  core:     {}", files_core::VERSION);
-            println!("  pkg:      {}", files_pkg::VERSION);
-            println!("  platform: {}", files_platform::VERSION);
+            println!("krypt {}", env!("CARGO_PKG_VERSION"));
+            println!("  core:     {}", krypt_core::VERSION);
+            println!("  pkg:      {}", krypt_pkg::VERSION);
+            println!("  platform: {}", krypt_platform::VERSION);
         }
     }
 

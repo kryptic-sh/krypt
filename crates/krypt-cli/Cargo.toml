@@ -1,5 +1,5 @@
 [package]
-name          = "files"
+name          = "krypt"
 description   = "Cross-platform dotfiles manager. Rust binary. Config-driven."
 version.workspace      = true
 authors.workspace      = true
@@ -13,7 +13,7 @@ keywords    = ["dotfiles", "config", "stow", "cli"]
 categories  = ["command-line-utilities", "config"]
 
 [[bin]]
-name = "files"
+name = "krypt"
 path = "src/main.rs"
 
 [dependencies]
@@ -22,6 +22,6 @@ color-eyre         = { workspace = true }
 tracing            = { workspace = true }
 tracing-subscriber = { workspace = true }
 
-files-core     = { workspace = true }
-files-pkg      = { workspace = true }
-files-platform = { workspace = true }
+krypt-core     = { workspace = true }
+krypt-pkg      = { workspace = true }
+krypt-platform = { workspace = true }

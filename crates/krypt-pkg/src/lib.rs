@@ -1,4 +1,4 @@
-//! `files-pkg` — package manager abstraction.
+//! `krypt-pkg` — package manager abstraction.
 //!
 //! Cross-distro / cross-platform install surface. One trait, several
 //! impls. Auto-detects the right manager at runtime; users can override.
@@ -8,5 +8,5 @@
 #![forbid(unsafe_code)]
 #![warn(missing_docs)]
 
-/// Crate version, exposed for `files --version` aggregation.
+/// Crate version, exposed for `krypt --version` aggregation.
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");

@@ -1,7 +1,7 @@
 # Contributing
 
 Thanks for taking a look. The project is in early development — read the
-phase milestones in [Issues](https://github.com/mxaddict/files/issues)
+phase milestones in [Issues](https://github.com/kryptic-sh/krypt/issues)
 to see where help fits.
 
 ## Commit style
@@ -51,13 +51,13 @@ adopt `edition = "2024"` later).
 
 ```
 crates/
-├── files-cli/        # bin: `files`
-├── files-core/       # lib: engine
-├── files-pkg/        # lib: package manager abstraction
-└── files-platform/   # lib: cfg-gated OS abstractions
+├── krypt-cli/        # bin: `krypt`
+├── krypt-core/       # lib: engine
+├── krypt-pkg/        # lib: package manager abstraction
+└── krypt-platform/   # lib: cfg-gated OS abstractions
 ```
 
-When in doubt, put new code in `files-core` and re-export through the CLI.
+When in doubt, put new code in `krypt-core` and re-export through the CLI.
 The CLI crate stays thin.
 
 ## Issues + PRs
@@ -69,23 +69,25 @@ The CLI crate stays thin.
 
 ## Release secrets
 
-The release workflow publishes to three external destinations. Each requires a secret:
+The release workflow publishes to three external destinations. Secrets are
+provisioned **at the kryptic.sh org level** and inherited by this repo:
 
-| Secret                 | Used by         | Source                                                              |
-| ---------------------- | --------------- | ------------------------------------------------------------------- |
-| `CARGO_REGISTRY_TOKEN` | `publish-crates` | crates.io → Account Settings → API Tokens → New (scoped to `files*`) |
-| `AUR_SSH_KEY`          | `aur-bin`        | ed25519 private key, public half registered on aur.archlinux.org    |
-| `BREW_SSH_KEY`         | `brew-tap`       | ed25519 private key, public half is a write deploy key on `mxaddict/homebrew-tap` |
+| Secret                 | Used by          | Visibility                          |
+| ---------------------- | ---------------- | ----------------------------------- |
+| `CARGO_REGISTRY_TOKEN` | `publish-crates` | org-wide                            |
+| `AUR_SSH_KEY`          | `aur-bin`        | selected repos (krypt is allowlisted) |
+| `BREW_SSH_KEY`         | `brew-tap`       | selected repos (krypt is allowlisted) |
 
-Add via `Settings → Secrets and variables → Actions → New repository secret`.
+Org admins manage these at `kryptic-sh/.github` org settings. Individual repo
+contributors don't need to do anything.
 
-The first tagged release after secrets land will:
+The first tagged release will:
 
 1. Build all 6 target archives + sha256 sidecars
 2. Create a GitHub Release
 3. Publish all 4 workspace crates to crates.io (idempotent — skips already-published versions)
-4. Render PKGBUILD + push to `aur.archlinux.org/files-bin.git`
-5. Render Homebrew formula + push to `mxaddict/homebrew-tap@main`
+4. Render PKGBUILD + push to `aur.archlinux.org/krypt-bin.git`
+5. Render Homebrew formula + push to `kryptic-sh/homebrew-tap@main`
 
 If any step fails, retry with `gh workflow run release.yml --ref v<version>`.
 

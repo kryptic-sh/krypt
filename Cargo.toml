@@ -1,10 +1,10 @@
 [workspace]
 resolver = "2"
 members = [
-    "crates/files-cli",
-    "crates/files-core",
-    "crates/files-pkg",
-    "crates/files-platform",
+    "crates/krypt-cli",
+    "crates/krypt-core",
+    "crates/krypt-pkg",
+    "crates/krypt-platform",
 ]
 
 [workspace.package]
@@ -13,8 +13,8 @@ authors       = ["mxaddict <mxaddict@kryptic.sh>"]
 edition       = "2021"
 rust-version  = "1.85"
 license       = "MIT"
-repository    = "https://github.com/mxaddict/files"
-homepage      = "https://github.com/mxaddict/files"
+repository    = "https://github.com/kryptic-sh/krypt"
+homepage      = "https://github.com/kryptic-sh/krypt"
 readme        = "README.md"
 
 [workspace.dependencies]
@@ -26,9 +26,9 @@ tracing     = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 
 # Workspace internal crates
-files-core     = { path = "crates/files-core",     version = "0.0.1" }
-files-pkg      = { path = "crates/files-pkg",      version = "0.0.1" }
-files-platform = { path = "crates/files-platform", version = "0.0.1" }
+krypt-core     = { path = "crates/krypt-core",     version = "0.0.1" }
+krypt-pkg      = { path = "crates/krypt-pkg",      version = "0.0.1" }
+krypt-platform = { path = "crates/krypt-platform", version = "0.0.1" }
 
 [profile.release]
 lto           = "thin"

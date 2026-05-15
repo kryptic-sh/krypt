@@ -1,6 +1,6 @@
 [package]
-name          = "files-core"
-description   = "Core engine for the `files` dotfiles manager: config, paths, copy, manifest, runner."
+name          = "krypt-platform"
+description   = "Cross-platform OS abstractions for the `krypt` dotfiles manager."
 version.workspace      = true
 authors.workspace      = true
 edition.workspace      = true
@@ -11,6 +11,4 @@ homepage.workspace     = true
 readme.workspace       = true
 
 [dependencies]
-serde   = { workspace = true }
-toml    = { workspace = true }
 tracing = { workspace = true }

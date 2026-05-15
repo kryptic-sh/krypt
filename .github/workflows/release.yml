@@ -3,6 +3,7 @@ name: release
 on:
   push:
     tags: ["v*"]
+  workflow_dispatch:
 
 permissions:
   contents: write
@@ -10,6 +11,10 @@ permissions:
 env:
   CARGO_TERM_COLOR: always
   RUST_BACKTRACE: 1
+
+concurrency:
+  group: release-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ !startsWith(github.ref, 'refs/tags/') }}
 
 jobs:
   build:
@@ -21,29 +26,35 @@ jobs:
           - target: x86_64-unknown-linux-gnu
             os: ubuntu-latest
             archive: tar.gz
+            suffix: ""
 
           - target: x86_64-unknown-linux-musl
             os: ubuntu-latest
             archive: tar.gz
+            suffix: ""
             apt_packages: musl-tools
 
           - target: aarch64-unknown-linux-gnu
             os: ubuntu-latest
             archive: tar.gz
+            suffix: ""
             apt_packages: gcc-aarch64-linux-gnu
             linker: aarch64-linux-gnu-gcc
 
           - target: x86_64-apple-darwin
             os: macos-latest
             archive: tar.gz
+            suffix: ""
 
           - target: aarch64-apple-darwin
             os: macos-latest
             archive: tar.gz
+            suffix: ""
 
           - target: x86_64-pc-windows-msvc
             os: windows-latest
             archive: zip
+            suffix: ".exe"
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v5
@@ -73,41 +84,58 @@ jobs:
           key: release-${{ matrix.target }}
 
       - name: Build release
-        run: cargo build --release --target ${{ matrix.target }} --package files
+        run: cargo build --release --locked --target ${{ matrix.target }} --package krypt
 
-      - name: Strip binary (Unix)
-        if: runner.os != 'Windows'
+      - name: Strip binary (Unix native)
+        if: runner.os != 'Windows' && matrix.target != 'aarch64-unknown-linux-gnu'
+        shell: bash
+        run: strip target/${{ matrix.target }}/release/krypt || true
+
+      - name: Package (tar.gz)
+        if: matrix.archive == 'tar.gz'
         shell: bash
         run: |
-          # Skip strip when cross-compiling (host strip can't read foreign binaries)
-          if [ "${{ matrix.target }}" = "aarch64-unknown-linux-gnu" ]; then
-            echo "Skipping strip for cross-compiled aarch64"
+          set -euo pipefail
+          ARCHIVE="krypt-${GITHUB_REF_NAME}-${{ matrix.target }}.tar.gz"
+          mkdir -p stage
+          cp "target/${{ matrix.target }}/release/krypt${{ matrix.suffix }}" stage/
+          cp README.md stage/
+          cp LICENSE stage/
+          tar -czf "$ARCHIVE" -C stage .
+          if command -v sha256sum >/dev/null 2>&1; then
+            sha256sum "$ARCHIVE" > "$ARCHIVE.sha256"
           else
-            strip target/${{ matrix.target }}/release/files || true
+            shasum -a 256 "$ARCHIVE" > "$ARCHIVE.sha256"
           fi
+          ls -la "$ARCHIVE" "$ARCHIVE.sha256"
 
-      - name: Package
-        shell: bash
+      - name: Package (zip)
+        if: matrix.archive == 'zip'
+        shell: pwsh
         run: |
-          name="files-${{ github.ref_name }}-${{ matrix.target }}"
-          mkdir -p dist
-          if [ "${{ matrix.archive }}" = "zip" ]; then
-            7z a "dist/${name}.zip" "./target/${{ matrix.target }}/release/files.exe"
-          else
-            tar -C "target/${{ matrix.target }}/release" -czf "dist/${name}.tar.gz" files
-          fi
-          ls -la dist/
+          $ARCHIVE = "krypt-$env:GITHUB_REF_NAME-${{ matrix.target }}.zip"
+          New-Item -ItemType Directory -Force stage | Out-Null
+          Copy-Item "target/${{ matrix.target }}/release/krypt${{ matrix.suffix }}" stage/
+          Copy-Item "README.md" stage/
+          Copy-Item "LICENSE" stage/
+          Compress-Archive -Path stage/* -DestinationPath $ARCHIVE
+          $hash = (Get-FileHash -Algorithm SHA256 $ARCHIVE).Hash.ToLower()
+          "$hash  $ARCHIVE" | Out-File -Encoding ASCII "$ARCHIVE.sha256"
 
-      - name: Upload build artifact
+      - name: Upload archive + sidecar
         uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.target }}
-          path: dist/*
+          path: |
+            krypt-*.${{ matrix.archive }}
+            krypt-*.${{ matrix.archive }}.sha256
           retention-days: 7
+          if-no-files-found: error
 
   release:
     name: Create GitHub Release
     needs: build
+    if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
@@ -120,16 +148,223 @@ jobs:
           path: dist
           merge-multiple: true
 
-      - name: Generate checksums
+      - name: Generate aggregate SHA256SUMS
         run: |
           cd dist
-          sha256sum * > SHA256SUMS
+          # Drop per-file .sha256 sidecars from the aggregate (they're
+          # uploaded separately for AUR/brew to fetch directly).
+          sha256sum krypt-* | grep -v '\.sha256$' > SHA256SUMS
           cat SHA256SUMS
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          files: dist/*
+          files: |
+            dist/krypt-*
+            dist/SHA256SUMS
           generate_release_notes: true
           draft: false
           prerelease: ${{ contains(github.ref_name, '-') }}
+
+  publish-crates:
+    name: Publish to crates.io
+    needs: [build]
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v'))
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Install toolchain (from rust-toolchain.toml)
+        run: rustup show
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Publish workspace crates in dependency order
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Workspace version is the same across all crates.
+          VERSION=$(grep -m1 '^version' Cargo.toml | cut -d'"' -f2)
+          echo "publishing version $VERSION"
+
+          publish_or_skip() {
+            local crate="$1"
+            local url="https://crates.io/api/v1/crates/${crate}/${VERSION}"
+            if curl -fsS -A "krypt-release-ci" -o /dev/null "$url"; then
+              echo "::notice::${crate}@${VERSION} already on crates.io, skipping"
+              return 0
+            fi
+            echo "::group::cargo publish -p $crate"
+            cargo publish -p "$crate" --locked --no-verify
+            echo "::endgroup::"
+            # crates.io takes a few seconds to index — give downstream
+            # publishes a chance to resolve the dep.
+            sleep 25
+          }
+
+          # Dependency order: libs first, bin last.
+          publish_or_skip krypt-platform
+          publish_or_skip krypt-pkg
+          publish_or_skip krypt-core
+          publish_or_skip krypt
+
+  aur-bin:
+    name: Publish krypt-bin to AUR
+    needs: [build]
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v'))
+    runs-on: ubuntu-latest
+    container: archlinux:latest
+    steps:
+      - name: Install build deps
+        run: |
+          set -euo pipefail
+          pacman -Sy --noconfirm --needed base-devel git openssh curl
+
+      - uses: actions/checkout@v5
+
+      - name: Resolve version
+        id: tag
+        run: |
+          set -euo pipefail
+          TAG="${GITHUB_REF_NAME}"
+          VERSION="${TAG#v}"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "release tag: $TAG (pkgver=$VERSION)"
+
+      - name: Fetch tarball sha256 sidecars
+        id: sha
+        run: |
+          set -euo pipefail
+          V="${{ steps.tag.outputs.version }}"
+          BASE="https://github.com/kryptic-sh/krypt/releases/download/v${V}"
+          for arch in x86_64-unknown-linux-gnu aarch64-unknown-linux-gnu; do
+            curl -fsSL "$BASE/krypt-v${V}-${arch}.tar.gz.sha256" -o "sha.${arch}"
+          done
+          echo "x86_64=$(awk '{print $1}' sha.x86_64-unknown-linux-gnu)" >> "$GITHUB_OUTPUT"
+          echo "aarch64=$(awk '{print $1}' sha.aarch64-unknown-linux-gnu)" >> "$GITHUB_OUTPUT"
+
+      - name: Render PKGBUILD
+        run: |
+          set -euo pipefail
+          mkdir -p out
+          sed \
+            -e "s/{VERSION}/${{ steps.tag.outputs.version }}/g" \
+            -e "s/{SHA256_X86_64}/${{ steps.sha.outputs.x86_64 }}/g" \
+            -e "s/{SHA256_AARCH64}/${{ steps.sha.outputs.aarch64 }}/g" \
+            pkg/aur/PKGBUILD-bin.in > out/PKGBUILD
+          echo "--- rendered PKGBUILD ---"
+          cat out/PKGBUILD
+
+      - name: Generate .SRCINFO
+        run: |
+          set -euo pipefail
+          useradd -m builder
+          chown -R builder:builder out
+          su -s /bin/bash builder -c 'cd out && makepkg --printsrcinfo > .SRCINFO'
+          echo "--- .SRCINFO ---"
+          cat out/.SRCINFO
+
+      - name: Configure SSH for AUR
+        env:
+          AUR_SSH_KEY: ${{ secrets.AUR_SSH_KEY }}
+        run: |
+          set -euo pipefail
+          install -dm700 ~/.ssh
+          printf '%s\n' "$AUR_SSH_KEY" > ~/.ssh/aur
+          chmod 600 ~/.ssh/aur
+
+      - name: Push to AUR
+        env:
+          GIT_SSH_COMMAND: "ssh -i ~/.ssh/aur -o IdentitiesOnly=yes -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=~/.ssh/known_hosts"
+        run: |
+          set -euo pipefail
+          git config --global user.name  "krypt-ci"
+          git config --global user.email "ci@kryptic.sh"
+          git clone ssh://aur@aur.archlinux.org/krypt-bin.git aur-repo
+          cp out/PKGBUILD out/.SRCINFO aur-repo/
+          cp pkg/aur/LICENSE pkg/aur/.gitignore aur-repo/
+          cd aur-repo
+          git add PKGBUILD .SRCINFO LICENSE .gitignore
+          if git diff --cached --quiet; then
+            echo "no changes vs current AUR head; nothing to push"
+            exit 0
+          fi
+          git commit -m "krypt-bin ${{ steps.tag.outputs.version }}"
+          git push origin HEAD:master
+
+  brew-tap:
+    name: Publish krypt formula to homebrew-tap
+    needs: [build]
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v'))
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Resolve version
+        id: tag
+        run: |
+          set -euo pipefail
+          TAG="${GITHUB_REF_NAME}"
+          VERSION="${TAG#v}"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "release tag: $TAG (formula version=$VERSION)"
+
+      - name: Fetch macOS sha256 sidecars
+        id: sha
+        run: |
+          set -euo pipefail
+          V="${{ steps.tag.outputs.version }}"
+          BASE="https://github.com/kryptic-sh/krypt/releases/download/v${V}"
+          for arch in aarch64-apple-darwin x86_64-apple-darwin; do
+            curl -fsSL "$BASE/krypt-v${V}-${arch}.tar.gz.sha256" -o "sha.${arch}"
+          done
+          echo "aarch64=$(awk '{print $1}' sha.aarch64-apple-darwin)" >> "$GITHUB_OUTPUT"
+          echo "x86_64=$(awk '{print $1}' sha.x86_64-apple-darwin)" >> "$GITHUB_OUTPUT"
+
+      - name: Render formula
+        run: |
+          set -euo pipefail
+          mkdir -p out
+          sed \
+            -e "s|{VERSION}|${{ steps.tag.outputs.version }}|g" \
+            -e "s|{SHA256_AARCH64_DARWIN}|${{ steps.sha.outputs.aarch64 }}|g" \
+            -e "s|{SHA256_X86_64_DARWIN}|${{ steps.sha.outputs.x86_64 }}|g" \
+            pkg/homebrew/krypt.rb.in > out/krypt.rb
+          echo "--- rendered formula ---"
+          cat out/krypt.rb
+
+      - name: Configure SSH for homebrew-tap
+        env:
+          BREW_SSH_KEY: ${{ secrets.BREW_SSH_KEY }}
+        run: |
+          set -euo pipefail
+          install -dm700 ~/.ssh
+          printf '%s\n' "$BREW_SSH_KEY" > ~/.ssh/brew
+          chmod 600 ~/.ssh/brew
+
+      - name: Push formula to homebrew-tap
+        env:
+          GIT_SSH_COMMAND: "ssh -i ~/.ssh/brew -o IdentitiesOnly=yes -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=~/.ssh/known_hosts"
+        run: |
+          set -euo pipefail
+          git config --global user.name  "krypt-ci"
+          git config --global user.email "ci@kryptic.sh"
+          git clone git@github.com:kryptic-sh/homebrew-tap.git tap
+          mkdir -p tap/Formula
+          cp out/krypt.rb tap/Formula/krypt.rb
+          cd tap
+          git add Formula/krypt.rb
+          if git diff --cached --quiet; then
+            echo "no changes vs current tap head; nothing to push"
+            exit 0
+          fi
+          git commit -m "krypt ${{ steps.tag.outputs.version }}"
+          git push origin HEAD:main

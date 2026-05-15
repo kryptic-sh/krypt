@@ -1,6 +1,6 @@
 [package]
-name          = "files-pkg"
-description   = "Package manager abstraction for the `files` dotfiles manager: pacman, apt, brew, scoop, winget, dnf."
+name          = "krypt-pkg"
+description   = "Package manager abstraction for the `krypt` dotfiles manager: pacman, apt, brew, scoop, winget, dnf."
 version.workspace      = true
 authors.workspace      = true
 edition.workspace      = true

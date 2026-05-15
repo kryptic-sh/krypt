@@ -187,42 +187,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "files"
-version = "0.0.1"
-dependencies = [
- "clap",
- "color-eyre",
- "files-core",
- "files-pkg",
- "files-platform",
- "tracing",
- "tracing-subscriber",
-]
-
-[[package]]
-name = "files-core"
-version = "0.0.1"
-dependencies = [
- "serde",
- "toml",
- "tracing",
-]
-
-[[package]]
-name = "files-pkg"
-version = "0.0.1"
-dependencies = [
- "tracing",
-]
-
-[[package]]
-name = "files-platform"
-version = "0.0.1"
-dependencies = [
- "tracing",
-]
-
-[[package]]
 name = "gimli"
 version = "0.32.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -261,6 +225,42 @@ name = "is_terminal_polyfill"
 version = "1.70.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a6cb138bb79a146c1bd460005623e142ef0181e3d0219cb493e02f7d08a35695"
+
+[[package]]
+name = "krypt"
+version = "0.0.1"
+dependencies = [
+ "clap",
+ "color-eyre",
+ "krypt-core",
+ "krypt-pkg",
+ "krypt-platform",
+ "tracing",
+ "tracing-subscriber",
+]
+
+[[package]]
+name = "krypt-core"
+version = "0.0.1"
+dependencies = [
+ "serde",
+ "toml",
+ "tracing",
+]
+
+[[package]]
+name = "krypt-pkg"
+version = "0.0.1"
+dependencies = [
+ "tracing",
+]
+
+[[package]]
+name = "krypt-platform"
+version = "0.0.1"
+dependencies = [
+ "tracing",
+]
 
 [[package]]
 name = "lazy_static"
