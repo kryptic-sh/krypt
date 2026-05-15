@@ -167,8 +167,8 @@ impl Resolver {
         while let Some(idx) = rest.find("${") {
             out.push_str(&rest[..idx]);
             rest = &rest[idx + 2..]; // skip `${`
-            // Find the matching `}` accounting for nested `${...}` (needed
-            // for `${env:VAR:-${HOME}/sub}` patterns).
+                                     // Find the matching `}` accounting for nested `${...}` (needed
+                                     // for `${env:VAR:-${HOME}/sub}` patterns).
             let end = find_matching_brace(rest).ok_or_else(|| ResolveError::Malformed {
                 input: input.into(),
                 reason: "unclosed `${`".into(),
@@ -279,19 +279,16 @@ impl Resolver {
                 .get(home_env_key)
                 .filter(|v| !v.is_empty())
                 .cloned()
-                .ok_or_else(|| ResolveError::UnknownVar {
-                    name: name.into(),
-                })
+                .ok_or_else(|| ResolveError::UnknownVar { name: name.into() })
         };
         // For derived vars (XDG_*, LOCAL_BIN, DOCUMENTS, MAC_LIBRARY) we
         // re-enter the resolver so that overriding `HOME` also reroutes
         // everything that derives from it.
-        let derived_from_home = |suffix: &str,
-                                 stack: &mut Vec<String>|
-         -> Result<String, ResolveError> {
-            let h = self.resolve_var_with_stack("HOME", stack)?;
-            Ok(format!("{h}{suffix}"))
-        };
+        let derived_from_home =
+            |suffix: &str, stack: &mut Vec<String>| -> Result<String, ResolveError> {
+                let h = self.resolve_var_with_stack("HOME", stack)?;
+                Ok(format!("{h}{suffix}"))
+            };
         let xdg = |env_key: &str,
                    fallback_suffix: &str,
                    stack: &mut Vec<String>|
@@ -416,10 +413,7 @@ mod tests {
     fn xdg_falls_back_to_default() {
         let r = linux("/home/user");
         assert_eq!(r.resolve("${XDG_CONFIG}").unwrap(), "/home/user/.config");
-        assert_eq!(
-            r.resolve("${XDG_DATA}").unwrap(),
-            "/home/user/.local/share"
-        );
+        assert_eq!(r.resolve("${XDG_DATA}").unwrap(), "/home/user/.local/share");
     }
 
     #[test]
@@ -443,19 +437,13 @@ mod tests {
     #[test]
     fn env_fallback_used_when_unset() {
         let r = linux("/h");
-        assert_eq!(
-            r.resolve("${env:NOPE:-default}").unwrap(),
-            "default"
-        );
+        assert_eq!(r.resolve("${env:NOPE:-default}").unwrap(), "default");
     }
 
     #[test]
     fn env_fallback_can_reference_other_vars() {
         let r = linux("/h");
-        assert_eq!(
-            r.resolve("${env:NOPE:-${HOME}/x}").unwrap(),
-            "/h/x"
-        );
+        assert_eq!(r.resolve("${env:NOPE:-${HOME}/x}").unwrap(), "/h/x");
     }
 
     #[test]
