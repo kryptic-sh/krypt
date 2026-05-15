@@ -84,7 +84,7 @@ jobs:
           key: release-${{ matrix.target }}
 
       - name: Build release
-        run: cargo build --release --locked --target ${{ matrix.target }} --package krypt
+        run: cargo build --release --locked --target ${{ matrix.target }} --package krypt-cli
 
       - name: Strip binary (Unix native)
         if: runner.os != 'Windows' && matrix.target != 'aarch64-unknown-linux-gnu'
