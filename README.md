@@ -20,25 +20,20 @@ macOS, and Windows. Part of the [kryptic.sh](https://kryptic.sh) suite.
 
 ## Install
 
-Not yet released for general use. Once v0.1+ ships:
-
 ```sh
+cargo install krypt-cli            # any platform
 paru -S krypt-bin                  # Arch (AUR)
 brew install kryptic-sh/tap/krypt  # macOS
 scoop install krypt                # Windows (planned)
 nix run github:kryptic-sh/krypt    # Nix (planned)
 ```
 
-Build from source any platform:
+Every channel installs a binary named `krypt` on your `$PATH`.
 
-```sh
-cargo install --git https://github.com/kryptic-sh/krypt
-```
-
-> The `krypt` name on crates.io is currently held by an unrelated stale
-> 2020 project — `cargo install krypt` does not yet point at this tool.
-> A transfer request is in flight; until resolved, prefer the package
-> managers above or the `--git` install.
+> The `krypt` crate name on crates.io is held by an unrelated 6-year-stale
+> project — we publish the bin as `krypt-cli` for now. If/when the name
+> transfers (see [#37](https://github.com/kryptic-sh/krypt/issues/37)),
+> `cargo install krypt` will become the canonical install command.
 
 ## Quickstart (planned API)
 

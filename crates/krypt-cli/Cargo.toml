@@ -1,6 +1,6 @@
 [package]
-name          = "krypt"
-description   = "Cross-platform dotfiles manager. Rust binary. Config-driven."
+name          = "krypt-cli"
+description   = "Cross-platform dotfiles manager. Rust binary. Config-driven. (Installs the `krypt` binary.)"
 version.workspace      = true
 authors.workspace      = true
 edition.workspace      = true

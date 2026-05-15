@@ -207,19 +207,16 @@ jobs:
           }
 
           # Dependency order: libs first, bin last.
-          # NB: the `krypt` name is currently held on crates.io by an
-          # unrelated 6-year-stale tool (Stupremee/krypt). Outreach for
-          # a transfer is tracked in the issue tracker; until resolved,
-          # the bin crate is not published to crates.io. Users can still
-          # install via:
-          #   - cargo install --git https://github.com/kryptic-sh/krypt
-          #   - AUR `krypt-bin`
-          #   - Homebrew `kryptic-sh/tap/krypt`
-          #   - GitHub Releases prebuilt binaries
+          # The `krypt` crate name is held on crates.io by an unrelated
+          # 6-year-stale project (Stupremee/krypt) — see #37 for transfer
+          # outreach. Until/unless that lands, we publish the bin as
+          # `krypt-cli`. The installed binary on $PATH is still `krypt`
+          # (via [[bin]] name = "krypt" in crates/krypt-cli/Cargo.toml),
+          # so `cargo install krypt-cli && krypt --version` just works.
           publish_or_skip krypt-platform
           publish_or_skip krypt-pkg
           publish_or_skip krypt-core
-          # publish_or_skip krypt   # blocked on crates.io name transfer
+          publish_or_skip krypt-cli
 
   aur-bin:
     name: Publish krypt-bin to AUR

@@ -227,8 +227,8 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a6cb138bb79a146c1bd460005623e142ef0181e3d0219cb493e02f7d08a35695"
 
 [[package]]
-name = "krypt"
-version = "0.0.1"
+name = "krypt-cli"
+version = "0.0.2"
 dependencies = [
  "clap",
  "color-eyre",
@@ -241,7 +241,7 @@ dependencies = [
 
 [[package]]
 name = "krypt-core"
-version = "0.0.1"
+version = "0.0.2"
 dependencies = [
  "serde",
  "toml",
@@ -250,14 +250,14 @@ dependencies = [
 
 [[package]]
 name = "krypt-pkg"
-version = "0.0.1"
+version = "0.0.2"
 dependencies = [
  "tracing",
 ]
 
 [[package]]
 name = "krypt-platform"
-version = "0.0.1"
+version = "0.0.2"
 dependencies = [
  "tracing",
 ]
