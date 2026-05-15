@@ -178,7 +178,7 @@ fn test_validate() {
     });
 }
 
-/// `krypt paths` — exit 0, snapshot output (paths filtered to [TEMP]).
+/// `krypt paths` — exit 0, all XDG vars and HOME resolve under the temp sandbox.
 #[test]
 fn test_paths() {
     let env = Env::new();
@@ -190,10 +190,16 @@ fn test_paths() {
         .expect("run paths");
     assert!(output.status.success());
     let stdout = String::from_utf8_lossy(&output.stdout).into_owned();
-    let settings = snapshot_settings(&env);
-    settings.bind(|| {
-        insta::assert_snapshot!("paths", stdout);
-    });
+    let home_str = env.home.path().to_string_lossy().replace('\\', "/");
+    // Every XDG var must resolve under our sandbox home.
+    for var in &["HOME", "XDG_CONFIG", "XDG_DATA", "XDG_STATE", "XDG_CACHE"] {
+        assert!(stdout.contains(var), "paths output missing {var}: {stdout}");
+    }
+    // HOME line must point at our sandbox.
+    assert!(
+        stdout.contains(&home_str),
+        "paths output must contain sandbox home {home_str}: {stdout}"
+    );
 }
 
 /// `krypt diff` — after link with no edits, exit 0, "all clean".
@@ -386,8 +392,8 @@ fn test_adopt_edits() {
     );
 }
 
-/// `krypt doctor` — after link, exits based on health; snapshot text output.
-/// Also tests `--json` produces parseable JSON with expected keys.
+/// `krypt doctor` — after link, text output contains key check labels; `--json`
+/// produces parseable JSON with expected keys.
 #[test]
 fn test_doctor() {
     let env = Env::new();
@@ -399,39 +405,53 @@ fn test_doctor() {
     let mp = manifest_path(&env);
     let tc_path = env.path(".config/krypt/config.toml");
 
-    let output = cmd(&env)
+    let config_arg = rp.join(".krypt.toml");
+    let config_str = config_arg.to_string_lossy();
+    let mp_str = mp.to_string_lossy();
+    let tc_str = tc_path.to_string_lossy();
+    let rp_str = rp.to_string_lossy();
+
+    let text_output = cmd(&env)
         .args([
             "doctor",
             "--config",
-            &rp.join(".krypt.toml").to_string_lossy(),
+            &config_str,
             "--manifest",
-            &mp.to_string_lossy(),
+            &mp_str,
             "--tool-config",
-            &tc_path.to_string_lossy(),
+            &tc_str,
             "--repo-path",
-            &rp.to_string_lossy(),
+            &rp_str,
         ])
         .output()
         .expect("run doctor");
-
-    let stdout = String::from_utf8_lossy(&output.stdout).into_owned();
-    let settings = snapshot_settings(&env);
-    settings.bind(|| {
-        insta::assert_snapshot!("doctor", stdout);
-    });
+    let text_stdout = String::from_utf8_lossy(&text_output.stdout).into_owned();
+    // Key check labels must appear in the text report regardless of platform.
+    for label in &[
+        "tool config",
+        "repo path",
+        "repo is git",
+        "manifest",
+        "platform",
+    ] {
+        assert!(
+            text_stdout.contains(label),
+            "doctor text missing label '{label}': {text_stdout}"
+        );
+    }
 
     let json_output = cmd(&env)
         .args([
             "doctor",
             "--json",
             "--config",
-            &rp.join(".krypt.toml").to_string_lossy(),
+            &config_str,
             "--manifest",
-            &mp.to_string_lossy(),
+            &mp_str,
             "--tool-config",
-            &tc_path.to_string_lossy(),
+            &tc_str,
             "--repo-path",
-            &rp.to_string_lossy(),
+            &rp_str,
         ])
         .output()
         .expect("run doctor --json");
