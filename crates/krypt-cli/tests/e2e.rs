@@ -211,10 +211,19 @@ fn test_paths() {
         .output()
         .expect("run paths");
     assert!(output.status.success());
-    let stdout = String::from_utf8_lossy(&output.stdout).into_owned();
-    let home_str = env.home.path().to_string_lossy().replace('\\', "/");
+    // Normalise both stdout and home path to forward slashes so the check
+    // works on Windows where path display uses backslashes.
+    let stdout = String::from_utf8_lossy(&output.stdout)
+        .replace('\\', "/")
+        .to_lowercase();
+    let home_str = env
+        .home
+        .path()
+        .to_string_lossy()
+        .replace('\\', "/")
+        .to_lowercase();
     // Every XDG var must resolve under our sandbox home.
-    for var in &["HOME", "XDG_CONFIG", "XDG_DATA", "XDG_STATE", "XDG_CACHE"] {
+    for var in &["home", "xdg_config", "xdg_data", "xdg_state", "xdg_cache"] {
         assert!(stdout.contains(var), "paths output missing {var}: {stdout}");
     }
     // HOME line must point at our sandbox.
