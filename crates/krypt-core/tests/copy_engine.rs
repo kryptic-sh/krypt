@@ -47,7 +47,7 @@ dst = "${HOME}/.gitconfig"
     assert!(matches!(p.actions[0], Action::Copy { .. }));
 
     let report = execute(&p, ExecOpts::default()).unwrap();
-    assert_eq!(report.written, 1);
+    assert_eq!(report.written_count(), 1);
     assert_eq!(report.skipped_conflicts, 0);
 
     let deployed = fs::read(home.path().join(".gitconfig")).unwrap();
@@ -79,7 +79,7 @@ dst = "${HOME}/foo"
     .unwrap();
     // Report counts the *planned* writes even in dry-run, so callers can
     // print "would write N files".
-    assert_eq!(report.written, 1);
+    assert_eq!(report.written_count(), 1);
     assert!(!home.path().join("foo").exists());
 }
 
@@ -103,7 +103,7 @@ dst = "${HOME}/a"
 
     // Default: don't overwrite.
     let report = execute(&p, ExecOpts::default()).unwrap();
-    assert_eq!(report.written, 0);
+    assert_eq!(report.written_count(), 0);
     assert_eq!(report.skipped_conflicts, 1);
     assert_eq!(fs::read(home.path().join("a")).unwrap(), b"existing");
 
@@ -116,7 +116,7 @@ dst = "${HOME}/a"
         },
     )
     .unwrap();
-    assert_eq!(report.written, 1);
+    assert_eq!(report.written_count(), 1);
     assert_eq!(fs::read(home.path().join("a")).unwrap(), b"new");
 }
 

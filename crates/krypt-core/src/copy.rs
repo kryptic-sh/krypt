@@ -13,16 +13,18 @@
 //!
 //! What's deferred:
 //!
-//! - **Manifest-aware idempotency** — issue #13 will replace the naive
-//!   `dst exists?` conflict check with a hash comparison against a
-//!   recorded manifest.
-//! - **Interactive prompts** for conflicts — issue #15 (`krypt link`)
-//!   wires the CLI on top.
+//! - **Manifest-aware idempotency** — the executor records hashes via
+//!   [`crate::manifest`] but the planner still classifies any existing
+//!   destination as a [`Action::Conflict`]. Issue #15 (`krypt link`)
+//!   will compare against the manifest to narrow safe re-deploys.
+//! - **Interactive prompts** for conflicts — issue #15 wires the CLI
+//!   on top.
 
 use std::fs::{self, File};
 use std::path::{Path, PathBuf};
 use std::time::SystemTime;
 
+use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 use crate::config::{Config, Link, Template};
@@ -85,7 +87,8 @@ pub enum ExecError {
 // ─── Plan + Action ──────────────────────────────────────────────────────────
 
 /// Which schema section an action came from.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
 pub enum EntryKind {
     /// `[[link]]`.
     Link,
@@ -106,9 +109,9 @@ pub enum Action {
         kind: EntryKind,
     },
 
-    /// Destination already exists. The caller decides what to do.
-    /// Manifest-aware drift detection in #13 will let us narrow some
-    /// of these to `Skip` (content matches) vs a real conflict.
+    /// Destination already exists. The caller decides what to do —
+    /// issue #15 (`krypt link`) will consult [`crate::manifest`] to
+    /// narrow content-matches into safe re-deploys.
     Conflict {
         /// Absolute source path.
         src: PathBuf,
@@ -328,13 +331,40 @@ pub struct ExecOpts {
     pub overwrite_conflicts: bool,
 }
 
+/// One file the executor wrote — surfaced so callers can update the
+/// deployment manifest (see [`crate::manifest`]).
+#[derive(Debug, Clone)]
+pub struct Written {
+    /// Absolute source path.
+    pub src: PathBuf,
+    /// Absolute destination path.
+    pub dst: PathBuf,
+    /// Section the entry came from.
+    pub kind: EntryKind,
+    /// `sha256:<hex>` of the source, computed at write time. `None` on
+    /// dry-runs.
+    pub hash_src: Option<String>,
+    /// `sha256:<hex>` of the destination after the copy. `None` on
+    /// dry-runs.
+    pub hash_dst: Option<String>,
+}
+
 /// What [`execute`] actually did.
 #[derive(Debug, Default, Clone)]
 pub struct Report {
-    /// Number of files written.
-    pub written: usize,
+    /// Files actually written, with hashes. Empty in dry-run mode aside
+    /// from the path/kind triples.
+    pub written: Vec<Written>,
     /// Conflict entries that were skipped (caller didn't opt into overwrite).
     pub skipped_conflicts: usize,
+}
+
+impl Report {
+    /// Convenience — count of written entries (back-compat with the
+    /// pre-#13 `usize` field, used in tests + CLI summaries).
+    pub fn written_count(&self) -> usize {
+        self.written.len()
+    }
 }
 
 /// Run a [`Plan`] against the filesystem.
@@ -342,18 +372,14 @@ pub fn execute(plan: &Plan, opts: ExecOpts) -> Result<Report, ExecError> {
     let mut report = Report::default();
     for action in &plan.actions {
         match action {
-            Action::Copy { src, dst, .. } => {
-                if !opts.dry_run {
-                    copy_atomic(src, dst)?;
-                }
-                report.written += 1;
+            Action::Copy { src, dst, kind } => {
+                let written = do_copy(src, dst, *kind, opts)?;
+                report.written.push(written);
             }
-            Action::Conflict { src, dst, .. } => {
+            Action::Conflict { src, dst, kind } => {
                 if opts.overwrite_conflicts {
-                    if !opts.dry_run {
-                        copy_atomic(src, dst)?;
-                    }
-                    report.written += 1;
+                    let written = do_copy(src, dst, *kind, opts)?;
+                    report.written.push(written);
                 } else {
                     report.skipped_conflicts += 1;
                 }
@@ -361,6 +387,28 @@ pub fn execute(plan: &Plan, opts: ExecOpts) -> Result<Report, ExecError> {
         }
     }
     Ok(report)
+}
+
+fn do_copy(src: &Path, dst: &Path, kind: EntryKind, opts: ExecOpts) -> Result<Written, ExecError> {
+    if opts.dry_run {
+        return Ok(Written {
+            src: src.to_path_buf(),
+            dst: dst.to_path_buf(),
+            kind,
+            hash_src: None,
+            hash_dst: None,
+        });
+    }
+    copy_atomic(src, dst)?;
+    let hash_src = crate::manifest::hash_file(src).ok();
+    let hash_dst = crate::manifest::hash_file(dst).ok();
+    Ok(Written {
+        src: src.to_path_buf(),
+        dst: dst.to_path_buf(),
+        kind,
+        hash_src,
+        hash_dst,
+    })
 }
 
 /// Atomically copy `src` -> `dst`, preserving mtime (and, on Unix,

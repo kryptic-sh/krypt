@@ -8,6 +8,23 @@ patch bumps.
 
 ## [Unreleased]
 
+### Added
+
+- Deployment manifest at `${XDG_STATE}/krypt/manifest.json`: versioned JSON
+  schema, atomic write, SHA-256 hashes per entry, and drift detection comparing
+  recorded hashes to current destination contents (#13).
+- `krypt diff` CLI subcommand — reports each manifest entry as `clean`,
+  `drifted`, or `missing`; exits non-zero when any entry is dirty.
+- `krypt_core::manifest` module: `Manifest`, `ManifestEntry`, `hash_file`,
+  `detect_drift`, `DriftStatus`, `DriftRecord`.
+
+### Changed
+
+- `copy::Report.written` is now a `Vec<Written>` carrying per-file
+  `(src, dst, kind, hash_src, hash_dst)`. Old `usize` counts are available via
+  `Report::written_count()`.
+- `copy::EntryKind` now serializes as lowercase JSON for manifest storage.
+
 ## [0.0.2] - 2026-05-15
 
 ### Added

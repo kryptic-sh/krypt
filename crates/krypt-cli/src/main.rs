@@ -8,6 +8,7 @@ use std::process::ExitCode;
 
 use clap::{Parser, Subcommand};
 use color_eyre::Result;
+use krypt_core::manifest::{DriftStatus, Manifest, detect_drift};
 use krypt_core::paths::Resolver;
 
 #[derive(Parser, Debug)]
@@ -52,6 +53,17 @@ enum Command {
         #[arg(long, conflicts_with = "config")]
         no_config: bool,
     },
+
+    /// Compare deployed files on disk against the manifest.
+    ///
+    /// Reports each entry as `clean`, `drifted` (hash mismatch), or
+    /// `missing` (file gone). Exits 0 on clean, 1 if any drift found.
+    Diff {
+        /// Path to the manifest. Defaults to
+        /// `${XDG_STATE}/krypt/manifest.json`.
+        #[arg(long)]
+        manifest: Option<PathBuf>,
+    },
 }
 
 fn main() -> Result<ExitCode> {
@@ -69,6 +81,7 @@ fn main() -> Result<ExitCode> {
         Some(Command::Version) | None => cmd_version(),
         Some(Command::Validate { path }) => cmd_validate(path),
         Some(Command::Paths { config, no_config }) => cmd_paths(config, no_config),
+        Some(Command::Diff { manifest }) => cmd_diff(manifest),
     }
 }
 
@@ -127,4 +140,55 @@ fn cmd_paths(config: PathBuf, no_config: bool) -> Result<ExitCode> {
     } else {
         ExitCode::SUCCESS
     })
+}
+
+fn cmd_diff(manifest_path: Option<PathBuf>) -> Result<ExitCode> {
+    let path = match manifest_path {
+        Some(p) => p,
+        None => default_manifest_path()?,
+    };
+
+    let Some(manifest) = Manifest::load(&path).map_err(color_eyre::eyre::Report::msg)? else {
+        eprintln!("no manifest at {} — nothing deployed yet", path.display());
+        return Ok(ExitCode::SUCCESS);
+    };
+
+    let drift = detect_drift(&manifest);
+    let mut dirty = 0usize;
+    let width = drift
+        .iter()
+        .map(|d| d.dst.to_string_lossy().len())
+        .max()
+        .unwrap_or(0);
+
+    for d in &drift {
+        let dst = d.dst.to_string_lossy();
+        match d.status {
+            DriftStatus::Clean => println!("clean    {dst:width$}"),
+            DriftStatus::Drifted => {
+                println!("drifted  {dst:width$}");
+                dirty += 1;
+            }
+            DriftStatus::DstMissing => {
+                println!("missing  {dst:width$}");
+                dirty += 1;
+            }
+        }
+    }
+
+    if dirty == 0 {
+        println!("\n{} entries, all clean", drift.len());
+        Ok(ExitCode::SUCCESS)
+    } else {
+        println!("\n{}/{} entries dirty", dirty, drift.len());
+        Ok(ExitCode::from(1))
+    }
+}
+
+fn default_manifest_path() -> Result<PathBuf> {
+    let r = Resolver::new();
+    let state = r
+        .resolve_var("XDG_STATE")
+        .map_err(|e| color_eyre::eyre::eyre!("resolving XDG_STATE: {e}"))?;
+    Ok(PathBuf::from(state).join("krypt").join("manifest.json"))
 }
