@@ -167,8 +167,8 @@ impl Resolver {
         while let Some(idx) = rest.find("${") {
             out.push_str(&rest[..idx]);
             rest = &rest[idx + 2..]; // skip `${`
-                                     // Find the matching `}` accounting for nested `${...}` (needed
-                                     // for `${env:VAR:-${HOME}/sub}` patterns).
+            // Find the matching `}` accounting for nested `${...}` (needed
+            // for `${env:VAR:-${HOME}/sub}` patterns).
             let end = find_matching_brace(rest).ok_or_else(|| ResolveError::Malformed {
                 input: input.into(),
                 reason: "unclosed `${`".into(),
@@ -289,10 +289,10 @@ impl Resolver {
                    fallback_suffix: &str,
                    stack: &mut Vec<String>|
          -> Result<String, ResolveError> {
-            if let Some(v) = self.env.get(env_key) {
-                if !v.is_empty() {
-                    return Ok(v.clone());
-                }
+            if let Some(v) = self.env.get(env_key)
+                && !v.is_empty()
+            {
+                return Ok(v.clone());
             }
             derived_from_home(fallback_suffix, stack)
         };
@@ -304,20 +304,20 @@ impl Resolver {
             "XDG_STATE" => xdg("XDG_STATE_HOME", "/.local/state", stack),
             "XDG_CACHE" => xdg("XDG_CACHE_HOME", "/.cache", stack),
             "XDG_RUNTIME" => {
-                if let Some(v) = self.env.get("XDG_RUNTIME_DIR") {
-                    if !v.is_empty() {
-                        return Ok(v.clone());
-                    }
+                if let Some(v) = self.env.get("XDG_RUNTIME_DIR")
+                    && !v.is_empty()
+                {
+                    return Ok(v.clone());
                 }
                 let fallback_keys = match self.platform {
                     Platform::Windows => ["TEMP", "TMP"].as_slice(),
                     Platform::Linux | Platform::Macos => ["TMPDIR"].as_slice(),
                 };
                 for k in fallback_keys {
-                    if let Some(v) = self.env.get(*k) {
-                        if !v.is_empty() {
-                            return Ok(v.clone());
-                        }
+                    if let Some(v) = self.env.get(*k)
+                        && !v.is_empty()
+                    {
+                        return Ok(v.clone());
                     }
                 }
                 Ok(match self.platform {

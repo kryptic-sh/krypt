@@ -6,7 +6,7 @@
 
 use std::path::PathBuf;
 
-use krypt_core::config::{parse_file, ConfigError};
+use krypt_core::config::{ConfigError, parse_file};
 
 fn fixture(name: &str) -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))

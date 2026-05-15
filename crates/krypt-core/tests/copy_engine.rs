@@ -10,8 +10,8 @@ use std::fs;
 use std::os::unix::fs::PermissionsExt;
 use std::path::Path;
 
-use krypt_core::config::{parse_str, Config};
-use krypt_core::copy::{execute, plan, Action, EntryKind, ExecOpts, PlanError};
+use krypt_core::config::{Config, parse_str};
+use krypt_core::copy::{Action, EntryKind, ExecOpts, PlanError, execute, plan};
 use krypt_core::paths::{Platform, Resolver};
 use tempfile::TempDir;
 
@@ -163,12 +163,16 @@ dst = "${HOME}/.config/nvim/"
         .iter()
         .map(|a| a.dst().strip_prefix(home.path()).unwrap().to_path_buf())
         .collect();
-    assert!(files
-        .iter()
-        .any(|p| p == Path::new(".config/nvim/init.lua")));
-    assert!(files
-        .iter()
-        .any(|p| p == Path::new(".config/nvim/lua/plug.lua")));
+    assert!(
+        files
+            .iter()
+            .any(|p| p == Path::new(".config/nvim/init.lua"))
+    );
+    assert!(
+        files
+            .iter()
+            .any(|p| p == Path::new(".config/nvim/lua/plug.lua"))
+    );
 
     execute(&p, ExecOpts::default()).unwrap();
     assert_eq!(

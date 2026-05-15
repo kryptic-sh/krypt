@@ -390,10 +390,10 @@ fn copy_atomic(src: &Path, dst: &Path) -> Result<(), ExecError> {
     // Preserve mtime. Read from source metadata; ignore failures for
     // platforms where it isn't supported.
     if let Ok(meta) = fs::metadata(src) {
-        if let Ok(modified) = meta.modified() {
-            if let Ok(f) = File::options().write(true).open(&tmp) {
-                let _ = f.set_modified(modified);
-            }
+        if let Ok(modified) = meta.modified()
+            && let Ok(f) = File::options().write(true).open(&tmp)
+        {
+            let _ = f.set_modified(modified);
         }
     } else {
         // Even if we couldn't read mtime, the copy itself succeeded.

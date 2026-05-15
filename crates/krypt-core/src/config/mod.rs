@@ -16,7 +16,7 @@
 mod parse;
 mod schema;
 
-pub use parse::{parse_file, parse_str, ConfigError};
+pub use parse::{ConfigError, parse_file, parse_str};
 pub use schema::{
     Command, Config, DepsGroup, Hook, Link, Meta, PromptField, PromptSection, Step, Template,
 };

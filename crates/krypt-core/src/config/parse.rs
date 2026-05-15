@@ -145,16 +145,14 @@ fn validate_link(link: &Link, loc: &str, path: &Path) -> Result<(), ConfigError>
 }
 
 fn validate_platform(platform: &Option<String>, loc: &str, path: &Path) -> Result<(), ConfigError> {
-    if let Some(p) = platform {
-        if !matches!(p.as_str(), "linux" | "macos" | "windows") {
-            return Err(ConfigError::Validation {
-                path: path.to_owned(),
-                location: loc.into(),
-                message: format!(
-                    "platform = {p:?} is not one of \"linux\" / \"macos\" / \"windows\""
-                ),
-            });
-        }
+    if let Some(p) = platform
+        && !matches!(p.as_str(), "linux" | "macos" | "windows")
+    {
+        return Err(ConfigError::Validation {
+            path: path.to_owned(),
+            location: loc.into(),
+            message: format!("platform = {p:?} is not one of \"linux\" / \"macos\" / \"windows\""),
+        });
     }
     Ok(())
 }
@@ -174,16 +172,16 @@ fn validate_prompt_section(
     let known: std::collections::HashSet<&str> =
         section.fields.iter().map(|f| f.key.as_str()).collect();
     for (idx, field) in section.fields.iter().enumerate() {
-        if let Some(req) = &field.requires {
-            if !known.contains(req.as_str()) {
-                return Err(ConfigError::Validation {
-                    path: path.to_owned(),
-                    location: format!("{loc}.fields[{idx}]"),
-                    message: format!(
-                        "`requires = \"{req}\"` references a field that doesn't exist in this section"
-                    ),
-                });
-            }
+        if let Some(req) = &field.requires
+            && !known.contains(req.as_str())
+        {
+            return Err(ConfigError::Validation {
+                path: path.to_owned(),
+                location: format!("{loc}.fields[{idx}]"),
+                message: format!(
+                    "`requires = \"{req}\"` references a field that doesn't exist in this section"
+                ),
+            });
         }
         if !matches!(field.r#type.as_str(), "string" | "bool" | "int") {
             return Err(ConfigError::Validation {
@@ -229,26 +227,26 @@ fn validate_step(step: &Step, loc: &str, path: &Path) -> Result<(), ConfigError>
     }
 
     // notify[0] = title, notify[1] = body. Allow 1- or 2-element form.
-    if let Some(n) = &step.notify {
-        if n.is_empty() || n.len() > 2 {
-            return Err(ConfigError::Validation {
-                path: path.to_owned(),
-                location: loc.into(),
-                message: format!("`notify` takes 1 or 2 strings, got {}", n.len()),
-            });
-        }
+    if let Some(n) = &step.notify
+        && (n.is_empty() || n.len() > 2)
+    {
+        return Err(ConfigError::Validation {
+            path: path.to_owned(),
+            location: loc.into(),
+            message: format!("`notify` takes 1 or 2 strings, got {}", n.len()),
+        });
     }
 
-    if let Some(of) = &step.on_fail {
-        if !matches!(of.as_str(), "abort" | "notify" | "ignore" | "prompt") {
-            return Err(ConfigError::Validation {
-                path: path.to_owned(),
-                location: loc.into(),
-                message: format!(
-                    "on_fail = {of:?} is not one of \"abort\" / \"notify\" / \"ignore\" / \"prompt\""
-                ),
-            });
-        }
+    if let Some(of) = &step.on_fail
+        && !matches!(of.as_str(), "abort" | "notify" | "ignore" | "prompt")
+    {
+        return Err(ConfigError::Validation {
+            path: path.to_owned(),
+            location: loc.into(),
+            message: format!(
+                "on_fail = {of:?} is not one of \"abort\" / \"notify\" / \"ignore\" / \"prompt\""
+            ),
+        });
     }
 
     Ok(())

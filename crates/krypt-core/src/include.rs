@@ -16,7 +16,7 @@ use std::{fs, io};
 
 use glob::glob;
 
-use crate::config::{parse_str, Config, ConfigError, Meta};
+use crate::config::{Config, ConfigError, Meta, parse_str};
 
 /// Maximum include-nesting depth before we bail out.
 const DEFAULT_MAX_DEPTH: usize = 8;

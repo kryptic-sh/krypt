@@ -5,7 +5,7 @@
 
 use std::path::PathBuf;
 
-use krypt_core::include::{load_with_includes, IncludeError};
+use krypt_core::include::{IncludeError, load_with_includes};
 
 fn fixture(name: &str) -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
