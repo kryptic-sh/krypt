@@ -67,6 +67,28 @@ The CLI crate stays thin.
 - Squash on merge unless commits are individually meaningful.
 - Reference issues with `Closes #NN` in the body of the merge commit.
 
+## Release secrets
+
+The release workflow publishes to three external destinations. Each requires a secret:
+
+| Secret                 | Used by         | Source                                                              |
+| ---------------------- | --------------- | ------------------------------------------------------------------- |
+| `CARGO_REGISTRY_TOKEN` | `publish-crates` | crates.io → Account Settings → API Tokens → New (scoped to `files*`) |
+| `AUR_SSH_KEY`          | `aur-bin`        | ed25519 private key, public half registered on aur.archlinux.org    |
+| `BREW_SSH_KEY`         | `brew-tap`       | ed25519 private key, public half is a write deploy key on `mxaddict/homebrew-tap` |
+
+Add via `Settings → Secrets and variables → Actions → New repository secret`.
+
+The first tagged release after secrets land will:
+
+1. Build all 6 target archives + sha256 sidecars
+2. Create a GitHub Release
+3. Publish all 4 workspace crates to crates.io (idempotent — skips already-published versions)
+4. Render PKGBUILD + push to `aur.archlinux.org/files-bin.git`
+5. Render Homebrew formula + push to `mxaddict/homebrew-tap@main`
+
+If any step fails, retry with `gh workflow run release.yml --ref v<version>`.
+
 ## License
 
 By contributing, you agree your changes are MIT-licensed.
