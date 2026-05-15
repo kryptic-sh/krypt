@@ -168,7 +168,7 @@ jobs:
 
   publish-crates:
     name: Publish to crates.io
-    needs: [build]
+    needs: [build, release]
     if: >-
       github.event_name == 'workflow_dispatch' ||
       (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v'))
@@ -223,7 +223,7 @@ jobs:
 
   aur-bin:
     name: Publish krypt-bin to AUR
-    needs: [build]
+    needs: [build, release]
     if: >-
       github.event_name == 'workflow_dispatch' ||
       (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v'))
@@ -309,7 +309,7 @@ jobs:
 
   brew-tap:
     name: Publish krypt formula to homebrew-tap
-    needs: [build]
+    needs: [build, release]
     if: >-
       github.event_name == 'workflow_dispatch' ||
       (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v'))
