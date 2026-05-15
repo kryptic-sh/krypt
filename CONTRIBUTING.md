@@ -44,7 +44,8 @@ cargo clippy --all-targets -- -D warnings
 cargo test --all
 ```
 
-MSRV is **Rust 1.88** (`edition = "2021"` workspace, individual crates may
+MSRV is **Rust 1.95** (matches `kryptic-sh/buffr`'s pin; bump in lockstep
+with the org) (`edition = "2021"` workspace, individual crates may
 adopt `edition = "2024"` later).
 
 ## Repo layout

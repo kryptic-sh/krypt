@@ -245,23 +245,19 @@ impl Resolver {
     fn builtin_var(&self, name: &str, stack: &mut Vec<String>) -> Result<String, ResolveError> {
         // Platform-gated first — error helpfully if used on the wrong OS.
         match name {
-            "WIN_LOCALAPPDATA" | "WIN_APPDATA" => {
-                if self.platform != Platform::Windows {
-                    return Err(ResolveError::WrongPlatform {
-                        name: name.into(),
-                        required: Platform::Windows,
-                        current: self.platform,
-                    });
-                }
+            "WIN_LOCALAPPDATA" | "WIN_APPDATA" if self.platform != Platform::Windows => {
+                return Err(ResolveError::WrongPlatform {
+                    name: name.into(),
+                    required: Platform::Windows,
+                    current: self.platform,
+                });
             }
-            "MAC_LIBRARY" => {
-                if self.platform != Platform::Macos {
-                    return Err(ResolveError::WrongPlatform {
-                        name: name.into(),
-                        required: Platform::Macos,
-                        current: self.platform,
-                    });
-                }
+            "MAC_LIBRARY" if self.platform != Platform::Macos => {
+                return Err(ResolveError::WrongPlatform {
+                    name: name.into(),
+                    required: Platform::Macos,
+                    current: self.platform,
+                });
             }
             _ => {}
         }
