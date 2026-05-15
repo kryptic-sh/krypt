@@ -1,0 +1,5 @@
+# Should fail validation: "freebsd" is not a known platform.
+[[link]]
+src      = "a"
+dst      = "/tmp/x"
+platform = "freebsd"

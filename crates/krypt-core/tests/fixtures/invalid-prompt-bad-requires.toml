@@ -1,0 +1,6 @@
+# Should fail validation: `requires = "nope"` references no field in this section.
+[prompts.identity]
+writer = "noop"
+fields = [
+    { key = "a", prompt = "A?", requires = "nope" },
+]

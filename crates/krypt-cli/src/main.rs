@@ -3,6 +3,9 @@
 //! This is the CLI entrypoint. Real logic lives in `krypt-core`. This crate
 //! is intentionally thin: clap wiring + delegation.
 
+use std::path::PathBuf;
+use std::process::ExitCode;
+
 use clap::{Parser, Subcommand};
 use color_eyre::Result;
 
@@ -23,9 +26,19 @@ struct Cli {
 enum Command {
     /// Print version information and exit.
     Version,
+
+    /// Parse and validate a `.krypt.toml` file.
+    ///
+    /// Exits 0 on success, non-zero with a pretty error on failure.
+    Validate {
+        /// Path to the config file to check. Defaults to `.krypt.toml` in
+        /// the current directory.
+        #[arg(default_value = ".krypt.toml")]
+        path: PathBuf,
+    },
 }
 
-fn main() -> Result<()> {
+fn main() -> Result<ExitCode> {
     color_eyre::install()?;
     tracing_subscriber::fmt()
         .with_env_filter(
@@ -42,8 +55,17 @@ fn main() -> Result<()> {
             println!("  core:     {}", krypt_core::VERSION);
             println!("  pkg:      {}", krypt_pkg::VERSION);
             println!("  platform: {}", krypt_platform::VERSION);
+            Ok(ExitCode::SUCCESS)
         }
+        Some(Command::Validate { path }) => match krypt_core::config::parse_file(&path) {
+            Ok(_) => {
+                println!("✓ {} parsed and validated successfully", path.display());
+                Ok(ExitCode::SUCCESS)
+            }
+            Err(e) => {
+                eprintln!("✗ {e}");
+                Ok(ExitCode::from(2))
+            }
+        },
     }
-
-    Ok(())
 }

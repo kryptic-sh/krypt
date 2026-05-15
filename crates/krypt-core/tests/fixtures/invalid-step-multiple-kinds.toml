@@ -1,0 +1,7 @@
+# Should fail validation: step sets both `run` and `pipe`.
+[[command]]
+group = "x"
+name  = "y"
+steps = [
+    { run = ["echo", "hi"], pipe = ["cat"] },
+]

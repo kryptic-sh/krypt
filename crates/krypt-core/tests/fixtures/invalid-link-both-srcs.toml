@@ -1,0 +1,5 @@
+# Should fail validation: link sets BOTH src and src_glob.
+[[link]]
+src      = "a"
+src_glob = "b/*"
+dst      = "/tmp/x"

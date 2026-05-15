@@ -1,0 +1,111 @@
+# Comprehensive valid `.krypt.toml` covering every section of the schema.
+# Used by the integration test suite to guard against schema regressions.
+
+include = [
+    ".krypt/menus.toml",
+    ".krypt/deps.toml",
+]
+
+[meta]
+name        = "kitchen-sink dotfiles"
+description = "Exercises every section of the schema."
+krypt_min   = "0.0.1"
+
+[paths]
+HOME        = "${env:HOME}"
+XDG_CONFIG  = "${env:XDG_CONFIG_HOME:-${HOME}/.config}"
+DOCUMENTS   = "${platform:documents}"
+
+[[link]]
+src = ".gitconfig"
+dst = "${HOME}/.gitconfig"
+
+[[link]]
+src_glob = ".config/nvim/**/*"
+dst      = "${XDG_CONFIG}/nvim/"
+platform = "linux"
+
+[[link]]
+src      = "powershell/profile.ps1"
+dst      = "${DOCUMENTS}/PowerShell/Microsoft.PowerShell_profile.ps1"
+platform = "windows"
+
+[[template]]
+src     = ".gitconfig.local.template"
+dst     = "${HOME}/.gitconfig.local"
+prompts = ["git"]
+
+[[template]]
+src      = "hypr/apps.template.conf"
+dst      = "${XDG_CONFIG}/hypr/apps.conf"
+prompts  = ["hypr_apps"]
+platform = "linux"
+
+[prompts.git]
+heading = "Git identity"
+writer  = "gitconfig"
+fields = [
+    { key = "name",  prompt = "Your name",  default_from = "git:user.name" },
+    { key = "email", prompt = "Your email", default_from = "git:user.email" },
+    { key = "key",   prompt = "GPG key", optional = true, default_from = "field:email" },
+    { key = "sign",  prompt = "Sign commits?", type = "bool", default = false, requires = "key" },
+]
+
+[prompts.hypr_apps]
+heading = "Hyprland defaults"
+writer  = "hypr_vars"
+fields = [
+    { key = "terminal",    prompt = "Terminal",     default = "alacritty",    read_var = "terminal" },
+    { key = "filemanager", prompt = "File manager", default = "nautilus -w",  read_var = "filemanager" },
+    { key = "lock",        prompt = "Lock command", default = "hyprlock",     read_var = "lock" },
+]
+
+[[deps]]
+group = "core"
+required_platforms = ["linux"]
+pacman = ["alacritty", "fish", "hyprland", "waybar"]
+apt    = ["alacritty", "fish"]
+brew   = ["alacritty", "fish"]
+scoop  = ["alacritty"]
+
+[[deps]]
+group = "fonts"
+required_platforms = ["all"]
+pacman = ["ttf-hack-nerd"]
+brew   = ["font-hack-nerd-font"]
+scoop  = ["hack-nf"]
+
+[[hook]]
+name = "fisher-update"
+when = "post-update"
+if   = "command_exists:fish"
+run  = ["fish", "-c", "fisher update"]
+ignore_failure = true
+
+[[hook]]
+name = "nvim-lazy-sync"
+when = "post-update"
+if   = "command_exists:nvim"
+run  = ["nvim", "--headless", "+Lazy! sync", "+qa"]
+ignore_failure = true
+
+[[command]]
+group       = "menu"
+name        = "wifi"
+description = "Pick + connect to a WiFi network"
+platform    = "linux"
+steps = [
+    { run = ["nmcli", "-t", "-f", "SSID,SIGNAL", "device", "wifi", "list"], capture = "list" },
+    { pipe = ["rofi", "-dmenu", "-p", "WiFi"], input = "{list}", capture = "ssid" },
+    { run = ["nmcli", "device", "wifi", "connect", "{ssid}"], on_fail = "notify" },
+]
+
+[[command]]
+group    = "battery"
+name     = "report"
+platform = "linux"
+steps = [
+    { run = ["cat", "/sys/class/power_supply/BAT0/capacity"], capture = "pct" },
+    { run = ["cat", "/sys/class/power_supply/BAT0/status"],   capture = "status" },
+    { notify = ["Battery", "{pct}% — {status}"] },
+]

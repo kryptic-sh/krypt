@@ -1,0 +1,5 @@
+# Should fail: `made_up_field` is not in the schema.
+made_up_field = "oops"
+
+[meta]
+name = "x"

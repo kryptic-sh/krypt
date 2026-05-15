@@ -1,0 +1,3 @@
+# Should fail validation: link sets NEITHER src nor src_glob.
+[[link]]
+dst = "/tmp/x"
