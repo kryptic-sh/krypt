@@ -18,5 +18,8 @@ jobs:
         run: rustup show
       - uses: Swatinem/rust-cache@v2
       - name: Install cargo-deny
-        run: cargo install cargo-deny --locked
+        # Pin to a release compatible with our rust-toolchain.toml (1.85).
+        # cargo-deny 0.19+ bumps MSRV to 1.88. Revisit once we bump the
+        # repo's rust-toolchain.toml.
+        run: cargo install cargo-deny@0.18.3 --locked
       - run: cargo deny check
