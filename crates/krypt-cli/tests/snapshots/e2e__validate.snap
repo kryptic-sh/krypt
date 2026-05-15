@@ -1,0 +1,6 @@
+---
+source: crates/krypt-cli/tests/e2e.rs
+assertion_line: 182
+expression: stdout
+---
+✓ [TEMP]/.krypt.toml parsed and validated successfully

@@ -1,0 +1,13 @@
+---
+source: crates/krypt-cli/tests/e2e.rs
+assertion_line: 200
+expression: stdout
+---
+DOCUMENTS    [TEMP]/Documents
+HOME         [TEMP]
+LOCAL_BIN    [TEMP]/.local/bin
+XDG_CACHE    [TEMP]/.cache
+XDG_CONFIG   [TEMP]/.config
+XDG_DATA     [TEMP]/.local/share
+XDG_RUNTIME  /tmp
+XDG_STATE    [TEMP]/.local/state

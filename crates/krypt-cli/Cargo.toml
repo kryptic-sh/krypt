@@ -26,3 +26,9 @@ tracing-subscriber = { workspace = true }
 krypt-core     = { workspace = true }
 krypt-pkg      = { workspace = true }
 krypt-platform = { workspace = true }
+
+[dev-dependencies]
+assert_cmd = "2"
+assert_fs  = "1"
+predicates = "3"
+insta      = { version = "1", features = ["filters"] }

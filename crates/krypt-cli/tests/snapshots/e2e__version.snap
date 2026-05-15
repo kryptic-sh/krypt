@@ -1,0 +1,9 @@
+---
+source: crates/krypt-cli/tests/e2e.rs
+assertion_line: 158
+expression: stdout
+---
+krypt [VERSION]
+  core:     [VERSION]
+  pkg:      [VERSION]
+  platform: [VERSION]

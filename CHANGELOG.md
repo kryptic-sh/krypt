@@ -10,6 +10,17 @@ patch bumps.
 
 ### Added
 
+- End-to-end integration test harness in `crates/krypt-cli/tests/e2e.rs` —
+  executes the compiled `krypt` binary against isolated tempdir sandboxes (HOME,
+  XDG_CONFIG_HOME, XDG_STATE_HOME, XDG_DATA_HOME, XDG_CACHE_HOME all redirected
+  to a per-test `TempDir`). One golden-path test per public subcommand:
+  `version`, `validate`, `paths`, `diff`, `link`, `unlink`, `relink`,
+  `init --bare`, `update` (no-init error path), `adopt`, `adopt-edits`, `doctor`
+  (text + JSON). Snapshot tests use `insta` with filters to redact temp paths,
+  version strings, git hashes, and age values. New dev-dependencies:
+  `assert_cmd`, `assert_fs`, `predicates`, `insta` (with the `filters` feature)
+  (#22).
+
 - `krypt doctor [--json] [--config <path>] [--manifest <path>] [--tool-config <path>] [--repo-path <path>]`
   subcommand — diagnostic health-check for an install. Prints one status line
   per check (✓ / ! / ✗ / -) or, with `--json`, emits the `DoctorReport` struct
