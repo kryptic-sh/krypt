@@ -1,20 +1,28 @@
 # krypt
 
+[![CI](https://github.com/kryptic-sh/krypt/actions/workflows/ci.yml/badge.svg)](https://github.com/kryptic-sh/krypt/actions/workflows/ci.yml)
+[![crates.io](https://img.shields.io/crates/v/krypt-cli.svg)](https://crates.io/crates/krypt-cli)
+[![docs.rs](https://img.shields.io/docsrs/krypt-core)](https://docs.rs/krypt-core)
+[![license: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+
 Cross-platform dotfiles manager. Rust binary. Config-driven.
 
-A vault for your dotfiles — clone, deploy, and keep in sync across Linux,
-macOS, and Windows. Part of the [kryptic.sh](https://kryptic.sh) suite.
+A vault for your dotfiles — clone, deploy, and keep in sync across Linux, macOS,
+and Windows. Part of the [kryptic.sh](https://kryptic.sh) suite.
 
-> Status: **early development**. v0.0.1 is a scaffolding release — only
-> `krypt --version` works today. The roadmap lives in
-> [GitHub Issues](https://github.com/kryptic-sh/krypt/issues) organized into
-> phase milestones.
+> Status: **pre-alpha**. v0.0.2 ships the engine layers (schema parser,
+> include expansion, path resolver, copy engine) as libraries. The CLI
+> only exposes `krypt version`, `krypt validate`, and `krypt paths` so far —
+> the user-facing surface (`init` / `link` / `update` / `setup`) lands in
+> later Phase 1 milestones. See
+> [open issues](https://github.com/kryptic-sh/krypt/issues) for the plan.
 
 ## What it will do
 
 - One binary to manage your dotfiles end-to-end on Linux, macOS, and Windows.
 - Replaces stow (copy-based deploy with manifest-tracked drift detection).
-- Replaces ad-hoc bash scripts via a declarative `.krypt.toml` and a step runner.
+- Replaces ad-hoc bash scripts via a declarative `.krypt.toml` and a step
+  runner.
 - Interactive first-run wizard that fills in user-specific values.
 - Cross-distro / cross-platform package install abstraction.
 
