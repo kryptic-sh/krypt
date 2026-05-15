@@ -1,0 +1,5 @@
+include = ["simple_inc1.toml"]
+
+[[link]]
+src = "dotfiles/root.conf"
+dst = "/tmp/root.conf"

@@ -1,0 +1,3 @@
+[[link]]
+src = "dotfiles/part_c.conf"
+dst = "/tmp/part_c.conf"

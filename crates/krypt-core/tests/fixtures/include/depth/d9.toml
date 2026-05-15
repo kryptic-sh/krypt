@@ -1,0 +1,3 @@
+[[link]]
+src = "dotfiles/d9.conf"
+dst = "/tmp/d9.conf"

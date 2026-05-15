@@ -1,0 +1,5 @@
+include = ["d4.toml"]
+
+[[link]]
+src = "dotfiles/d3.conf"
+dst = "/tmp/d3.conf"

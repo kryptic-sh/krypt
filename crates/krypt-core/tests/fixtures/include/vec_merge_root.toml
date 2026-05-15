@@ -1,0 +1,9 @@
+include = ["vec_merge_inc.toml"]
+
+[[link]]
+src = "dotfiles/root1.conf"
+dst = "/tmp/root1.conf"
+
+[[link]]
+src = "dotfiles/root2.conf"
+dst = "/tmp/root2.conf"

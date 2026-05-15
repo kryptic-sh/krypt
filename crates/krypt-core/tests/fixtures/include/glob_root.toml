@@ -1,0 +1,5 @@
+include = ["parts/*.toml"]
+
+[[link]]
+src = "dotfiles/root.conf"
+dst = "/tmp/root.conf"
