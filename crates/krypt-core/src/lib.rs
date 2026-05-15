@@ -7,11 +7,11 @@
 //!
 //! - [`config`]  — `.krypt.toml` schema, parser, validator (issue #9)
 //! - [`paths`]   — `${VAR}` resolution with XDG defaults + platform gating
-//!                 (issue #11)
+//!   (issue #11)
 //! - [`include`] — `include = [...]` glob expansion and config merging
-//!                 (issue #10)
+//!   (issue #10)
 //! - [`copy`]    — plan + atomic deploy of [[link]] and [[template]]
-//!                 entries to their resolved destinations (issue #12)
+//!   entries to their resolved destinations (issue #12)
 //!
 //! Planned for Phase 1: `manifest`, `runner`.
 

@@ -44,7 +44,7 @@ cargo clippy --all-targets -- -D warnings
 cargo test --all
 ```
 
-MSRV is **Rust 1.85** (`edition = "2021"` workspace, individual crates may
+MSRV is **Rust 1.88** (`edition = "2021"` workspace, individual crates may
 adopt `edition = "2024"` later).
 
 ## Repo layout
