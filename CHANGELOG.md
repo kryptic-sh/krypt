@@ -8,6 +8,18 @@ patch bumps.
 
 ## [Unreleased]
 
+### Added
+
+- `krypt-core::runner` module — step runner DSL: executes a `Vec<Step>` from a
+  `[[command]]` or `[[hook]]` declaratively. Public surface: `execute_steps`,
+  `execute_command`, `execute_hook`, `interpolate`, `Context`, `RunReport`,
+  `RunnerError`, `ProcessExec` / `Notifier` / `Prompter` traits,
+  `RealProcessExec`, `RealNotifier`, `RealPrompter`, and `Mock*` test doubles.
+  Predicate evaluation is stubbed (always `true`) — issue #24 will implement the
+  real grammar. Desktop notification stub prints to stderr — issue #26 will add
+  libnotify / macOS osascript / Windows toast. Hook integration into
+  `krypt update` is tracked in issue #43 (#23).
+
 ## [0.1.0] - 2026-05-16
 
 Phase 1 complete. The CLI now covers the full daily-driver loop:

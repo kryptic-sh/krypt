@@ -30,6 +30,9 @@
 //! - [`setup`]       — `krypt setup` interactive wizard: reads `[prompts]`
 //!   sections, asks questions, and applies one of four built-in writers
 //!   (gitconfig, hypr_vars, env, generic_template) (issue #18).
+//! - [`runner`]      — step runner DSL: executes a `Vec<Step>` from a
+//!   `[[command]]` or `[[hook]]` declaratively, with injected process,
+//!   notifier, and prompter dependencies (issue #23).
 
 #![forbid(unsafe_code)]
 #![warn(missing_docs)]
@@ -43,6 +46,7 @@ pub mod include;
 pub mod init;
 pub mod manifest;
 pub mod paths;
+pub mod runner;
 pub mod setup;
 pub mod tool_config;
 pub mod update;
