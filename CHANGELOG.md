@@ -10,15 +10,27 @@ patch bumps.
 
 ### Added
 
+- `krypt-core::predicate` module — predicate grammar + evaluator for `if =`
+  conditions in `[[command]]` / `[[hook]]` steps. Five predicate types:
+  `command_exists:<name>` (uses `which`), `env:VAR` / `env:VAR=value`,
+  `platform:linux|macos|windows`, `file_exists:<path>` (resolves `${VAR}` via
+  `Resolver` before stat). Negation (`!`) binds tighter than AND (`,`). Empty
+  predicate is vacuously true. Parse errors yield typed `PredicateError`
+  variants: `UnknownKind`, `Malformed`, `Resolve`. The
+  `default_predicate_evaluator` adapter wraps any `PredicateEnv` into the
+  `&dyn Fn(&str, &Context) -> bool` signature expected by
+  `runner::execute_steps` — eval errors swallowed as `tracing::warn!` (fail
+  closed: skip the step). `MockPredicateEnv` provided for host-independent
+  tests. OR (`||`) is deferred to a follow-up issue (#24).
+
 - `krypt-core::runner` module — step runner DSL: executes a `Vec<Step>` from a
   `[[command]]` or `[[hook]]` declaratively. Public surface: `execute_steps`,
   `execute_command`, `execute_hook`, `interpolate`, `Context`, `RunReport`,
   `RunnerError`, `ProcessExec` / `Notifier` / `Prompter` traits,
   `RealProcessExec`, `RealNotifier`, `RealPrompter`, and `Mock*` test doubles.
-  Predicate evaluation is stubbed (always `true`) — issue #24 will implement the
-  real grammar. Desktop notification stub prints to stderr — issue #26 will add
-  libnotify / macOS osascript / Windows toast. Hook integration into
-  `krypt update` is tracked in issue #43 (#23).
+  Desktop notification stub prints to stderr — issue #26 will add libnotify /
+  macOS osascript / Windows toast. Hook integration into `krypt update` is
+  tracked in issue #43 (#23).
 
 ## [0.1.0] - 2026-05-16
 

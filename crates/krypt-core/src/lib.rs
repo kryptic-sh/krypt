@@ -33,6 +33,11 @@
 //! - [`runner`]      — step runner DSL: executes a `Vec<Step>` from a
 //!   `[[command]]` or `[[hook]]` declaratively, with injected process,
 //!   notifier, and prompter dependencies (issue #23).
+//! - [`predicate`]   — predicate grammar + evaluator for `if =` conditions:
+//!   `command_exists`, `env`, `platform`, `file_exists`, negation (`!`), and
+//!   AND (`,`). [`predicate::default_predicate_evaluator`] wires a
+//!   [`predicate::PredicateEnv`] into the runner's closure parameter
+//!   (issue #24).
 
 #![forbid(unsafe_code)]
 #![warn(missing_docs)]
@@ -46,6 +51,7 @@ pub mod include;
 pub mod init;
 pub mod manifest;
 pub mod paths;
+pub mod predicate;
 pub mod runner;
 pub mod setup;
 pub mod tool_config;

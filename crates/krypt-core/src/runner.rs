@@ -1222,6 +1222,60 @@ mod tests {
         assert_eq!(report.steps_run, 0);
     }
 
+    // ── 15. default_predicate_evaluator integration ───────────────────────────
+
+    #[test]
+    fn default_predicate_evaluator_gates_step_via_mock() {
+        use crate::paths::Platform;
+        use crate::predicate::{MockPredicateEnv, default_predicate_evaluator};
+
+        // Build a mock env: linux, has "sh", does NOT have "rofi"
+        let mut mock = MockPredicateEnv::new(Platform::Linux);
+        mock.commands.insert("sh".to_owned());
+
+        let evaluator = default_predicate_evaluator(mock);
+
+        // Step 0: if = "platform:linux,command_exists:sh" → should run
+        // Step 1: if = "command_exists:rofi" → should skip
+        let steps = vec![
+            Step {
+                run: Some(vec!["echo".to_owned(), "runs".to_owned()]),
+                r#if: Some("platform:linux,command_exists:sh".to_owned()),
+                capture: Some("ran".to_owned()),
+                ..Default::default()
+            },
+            Step {
+                run: Some(vec!["echo".to_owned(), "skipped".to_owned()]),
+                r#if: Some("command_exists:rofi".to_owned()),
+                ..Default::default()
+            },
+        ];
+
+        let process = MockProcessExec::new([ok_result("runs\n")]);
+        let notifier = MockNotifier::default();
+        let mut prompter = MockPrompter::default();
+
+        let report = execute_steps(
+            &steps,
+            empty_ctx(),
+            &process,
+            &notifier,
+            &mut prompter,
+            &evaluator,
+        )
+        .unwrap();
+
+        assert_eq!(report.steps_run, 1, "only the first step should run");
+        assert_eq!(
+            report.steps_skipped_by_predicate, 1,
+            "second step should be skipped"
+        );
+        assert_eq!(
+            report.final_captures.get("ran").map(String::as_str),
+            Some("runs")
+        );
+    }
+
     #[test]
     fn execute_hook_respects_ignore_failure() {
         let hook = Hook {
