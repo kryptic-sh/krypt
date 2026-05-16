@@ -730,3 +730,83 @@ fn test_setup_yes() {
         "hypr file should contain terminal: {hypr_content}"
     );
 }
+
+/// `krypt menu` with no `[[command]] group = "menu"` entries → exit 0, output
+/// mentions "no menus".
+#[test]
+fn test_menu_list_empty() {
+    let env = Env::new();
+    init_bare(&env);
+
+    let rp = repo_path(&env);
+    // Write a config with no [[command]] entries at all.
+    fs::write(rp.join(".krypt.toml"), "[meta]\nname = \"test\"\n").expect("write .krypt.toml");
+
+    let config_path = rp.join(".krypt.toml");
+
+    let output = cmd(&env)
+        .args(["menu", "--config", &config_path.to_string_lossy()])
+        .output()
+        .expect("run menu");
+
+    assert!(
+        output.status.success(),
+        "krypt menu on empty config should exit 0; stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let stdout = String::from_utf8_lossy(&output.stdout).into_owned();
+    assert!(
+        stdout.contains("no menus"),
+        "output should mention 'no menus': {stdout}"
+    );
+}
+
+/// `krypt menu my-menu --dry-run` → exit 0, stdout contains the step listing.
+#[test]
+fn test_menu_dry_run() {
+    let env = Env::new();
+    init_bare(&env);
+
+    let rp = repo_path(&env);
+    let krypt_toml = concat!(
+        "[[command]]\n",
+        "group = \"menu\"\n",
+        "name = \"my-menu\"\n",
+        "description = \"Test menu\"\n",
+        "steps = [\n",
+        "  { run = [\"echo\", \"hello\"] },\n",
+        "  { notify = [\"Done\", \"All steps complete\"] },\n",
+        "]\n",
+    );
+    fs::write(rp.join(".krypt.toml"), krypt_toml).expect("write .krypt.toml");
+
+    let config_path = rp.join(".krypt.toml");
+
+    let output = cmd(&env)
+        .args([
+            "menu",
+            "my-menu",
+            "--dry-run",
+            "--config",
+            &config_path.to_string_lossy(),
+        ])
+        .output()
+        .expect("run menu --dry-run");
+
+    assert!(
+        output.status.success(),
+        "krypt menu my-menu --dry-run should exit 0; stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let stdout = String::from_utf8_lossy(&output.stdout).into_owned();
+    assert!(
+        stdout.contains("dry-run"),
+        "output should mention 'dry-run': {stdout}"
+    );
+    assert!(
+        stdout.contains("echo"),
+        "output should list the echo step: {stdout}"
+    );
+}

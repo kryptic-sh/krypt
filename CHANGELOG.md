@@ -49,6 +49,27 @@ patch bumps.
   on success, 1 on failure (error printed to stderr). No output on success
   (#26).
 
+- `krypt-core::menu` module — core logic for `krypt menu`. Public surface:
+  `list_menus` (alphabetical, platform-filtered by default; `show_all = true`
+  includes foreign-platform menus with a flag), `run_menu` (production entry
+  point with auto-detected notifier/prompter), `run_menu_with` (injectable
+  dependencies for tests and dry-run), `MenuOpts`, `MenuListEntry`,
+  `MenuReport`, `MenuError` (`ConfigLoad`, `MenuNotFound`, `PlatformMismatch`,
+  `Runner` — all large variants boxed to keep enum ≤ 128 bytes). Steps use
+  `{0}`..`{9}` for positional args and `{name}` for captures; `${VAR}` is NOT
+  expanded inside step args (config-level resolution only — documented in module
+  doc comment). The resolver IS used inside predicate evaluation as before
+  (#25).
+
+- `krypt menu [<name>] [--dry-run] [--config <path>] [--all] [-- args...]`
+  subcommand — first user-facing `[[command]]` group dispatcher. No `<name>`:
+  lists available menus (platform-filtered; `--all` shows everything). With
+  `<name>`: runs that menu's steps via the runner. `--dry-run` prints each
+  step's resolved invocation without spawning processes. Positional args after
+  `--` forward to steps as `{0}`..`{9}`. Error on name not found (exit 2); error
+  on platform mismatch (exit 1). Generic `krypt <group> <name>` dispatch for
+  arbitrary groups deferred to issue #45 (#25).
+
 ### Changed
 
 - `krypt-core::runner::RealNotifier` (stderr stub) replaced by

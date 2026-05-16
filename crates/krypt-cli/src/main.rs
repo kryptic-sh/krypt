@@ -13,6 +13,7 @@ use krypt_core::deploy::{DeployOpts, LinkReport, UnlinkReport, link, relink, unl
 use krypt_core::doctor::{DoctorOpts, doctor};
 use krypt_core::init::{InitError, InitOpts, init};
 use krypt_core::manifest::{DriftStatus, Manifest, detect_drift};
+use krypt_core::menu::{MenuError, MenuOpts, list_menus, run_menu};
 use krypt_core::notify::{AutoNotifier, NotifyBackend, detect};
 use krypt_core::paths::{Platform, Resolver};
 use krypt_core::runner::Notifier as _;
@@ -190,6 +191,17 @@ enum Command {
     /// Backend values for `--backend`: auto, notify-send, osascript,
     /// terminal-notifier, powershell, stderr.
     Notify(NotifyArgs),
+
+    /// List or run `[[command]] group = "menu"` entries from `.krypt.toml`.
+    ///
+    /// With no NAME argument, prints all available menus (platform-filtered by
+    /// default; use `--all` to show everything). With NAME, runs that menu's
+    /// step sequence. Positional arguments after `--` are forwarded to steps as
+    /// `{0}`..`{9}`. Use `--dry-run` to print the step plan without executing.
+    ///
+    /// Generic `krypt <group> <name>` dispatch for arbitrary groups (battery,
+    /// kanata, etc.) is tracked in issue #45.
+    Menu(MenuArgs),
 }
 
 #[derive(clap::Args, Debug)]
@@ -388,6 +400,29 @@ struct DeployArgs {
     force: bool,
 }
 
+#[derive(clap::Args, Debug)]
+struct MenuArgs {
+    /// Name of the menu to run. Omit to list available menus.
+    name: Option<String>,
+
+    /// Print step plan without executing. Process invocations and
+    /// notifications are stubbed.
+    #[arg(long)]
+    dry_run: bool,
+
+    /// Override the path to `.krypt.toml`.
+    #[arg(long)]
+    config: Option<PathBuf>,
+
+    /// Show all menus including those filtered by platform.
+    #[arg(long)]
+    all: bool,
+
+    /// Arguments forwarded to menu steps as {0}..{9}.
+    #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
+    args: Vec<String>,
+}
+
 fn main() -> Result<ExitCode> {
     color_eyre::install()?;
     tracing_subscriber::fmt()
@@ -419,6 +454,7 @@ fn main() -> Result<ExitCode> {
         Some(Command::Doctor(args)) => cmd_doctor(args),
         Some(Command::Deps(args)) => cmd_deps(args),
         Some(Command::Notify(args)) => cmd_notify(args),
+        Some(Command::Menu(args)) => cmd_menu(args),
     }
 }
 
@@ -1027,6 +1063,100 @@ fn cmd_doctor(args: DoctorArgs) -> Result<ExitCode> {
     } else {
         ExitCode::from(1)
     })
+}
+
+fn resolve_menu_config(args_config: Option<PathBuf>) -> Result<PathBuf> {
+    if let Some(p) = args_config {
+        return Ok(p);
+    }
+    // Try tool config's repo path first.
+    let tc_path = ToolConfig::default_path()
+        .map_err(|e| color_eyre::eyre::eyre!("resolving tool config path: {e}"))?;
+    if let Ok(Some(tc)) = ToolConfig::load(&tc_path) {
+        let repo_cfg = tc.repo.path.join(".krypt.toml");
+        if repo_cfg.exists() {
+            return Ok(repo_cfg);
+        }
+    }
+    Ok(PathBuf::from(".krypt.toml"))
+}
+
+fn cmd_menu(args: MenuArgs) -> Result<ExitCode> {
+    let config_path = resolve_menu_config(args.config)?;
+
+    let opts = MenuOpts {
+        config_path,
+        args: args.args.clone(),
+        dry_run: args.dry_run,
+    };
+
+    match args.name {
+        None => {
+            // List all menus.
+            let entries = match list_menus(&opts, args.all) {
+                Ok(e) => e,
+                Err(e) => {
+                    eprintln!("error: {e}");
+                    return Ok(ExitCode::from(1));
+                }
+            };
+
+            if entries.is_empty() {
+                println!("no menus defined");
+                return Ok(ExitCode::SUCCESS);
+            }
+
+            let filtered_count = entries.iter().filter(|e| e.platform_filtered).count();
+
+            println!("Available menus:\n");
+            let name_width = entries.iter().map(|e| e.name.len()).max().unwrap_or(0);
+            for entry in &entries {
+                let platform_note = if entry.platform_filtered {
+                    format!(" ({})", entry.platform.as_deref().unwrap_or("?"))
+                } else {
+                    String::new()
+                };
+                println!(
+                    "  {:<width$}  {}{}",
+                    entry.name,
+                    entry.description,
+                    platform_note,
+                    width = name_width,
+                );
+            }
+
+            if filtered_count > 0 && !args.all {
+                println!(
+                    "\n{filtered_count} menu(s) filtered out by platform \
+                     (run with --all to see)."
+                );
+            }
+
+            Ok(ExitCode::SUCCESS)
+        }
+
+        Some(ref name) => match run_menu(name, &opts) {
+            Ok(report) => {
+                if let Some(plan) = report.dry_run_plan {
+                    print!("{plan}");
+                } else {
+                    println!(
+                        "ran {name}: {} steps ({} skipped, {} ignored failures)",
+                        report.steps_run, report.steps_skipped, report.steps_failed_ignored,
+                    );
+                }
+                Ok(ExitCode::SUCCESS)
+            }
+            Err(MenuError::MenuNotFound { .. }) => {
+                eprintln!("error: menu {name:?} not found");
+                Ok(ExitCode::from(2))
+            }
+            Err(e) => {
+                eprintln!("error: {e}");
+                Ok(ExitCode::from(1))
+            }
+        },
+    }
 }
 
 fn cmd_notify(args: NotifyArgs) -> Result<ExitCode> {
