@@ -449,11 +449,16 @@ fn test_deps_dry_run() {
 
     let config_path = rp.join(".krypt.toml");
 
+    // Use an explicit manager so the test is deterministic on all CI platforms
+    // (auto-detection would fail on Windows runners where no manager is installed).
+    // pacman is always registered by pick_by_name regardless of availability.
     let output = cmd(&env)
         .args([
             "deps",
             "--config",
             &config_path.to_string_lossy(),
+            "--manager",
+            "pacman",
             "--dry-run",
         ])
         .output()
@@ -475,6 +480,11 @@ fn test_deps_dry_run() {
     assert!(
         stdout.contains("manager:"),
         "output should name the manager: {stdout}"
+    );
+    // The pacman package from the test config should appear in the "would install" line.
+    assert!(
+        stdout.contains("base-devel"),
+        "output should mention the queued package: {stdout}"
     );
 }
 

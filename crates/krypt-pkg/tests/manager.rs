@@ -266,8 +266,9 @@ fn pick_by_name_returns_manager_by_name() {
 
 // ─── install_deps orchestration ───────────────────────────────────────────────
 
+/// In non-dry-run mode, is_installed is called and already-installed packages are skipped.
 #[test]
-fn install_deps_installs_and_skips_already_present() {
+fn install_deps_skips_already_installed() {
     let groups = vec![DepGroup {
         group: "core".into(),
         apt: vec!["curl".into(), "git".into()],
@@ -277,7 +278,34 @@ fn install_deps_installs_and_skips_already_present() {
     // curl not installed, git installed
     let runner = MockRunner::new()
         .with("dpkg", &["-s", "curl"], MockResponse::failure())
-        .with("dpkg", &["-s", "git"], MockResponse::success());
+        .with("dpkg", &["-s", "git"], MockResponse::success())
+        // install call for curl only
+        .with("sudo", &["apt-get", "install", "-y", "curl"], MockResponse::success());
+
+    let opts = DepsOpts {
+        groups,
+        manager: Some("apt".into()),
+        group_filter: None,
+        dry_run: false,
+    };
+
+    let report = install_deps(&opts, &runner).unwrap();
+    assert_eq!(report.manager_used, "apt");
+    assert!(report.installed.contains(&"curl".to_string()));
+    assert!(report.already_installed.contains(&"git".to_string()));
+}
+
+/// In dry-run mode, is_installed is skipped and all packages are reported as would-install.
+#[test]
+fn install_deps_dry_run_skips_is_installed() {
+    let groups = vec![DepGroup {
+        group: "core".into(),
+        apt: vec!["curl".into(), "git".into()],
+        ..Default::default()
+    }];
+
+    // No mock responses needed — is_installed should not be called in dry-run.
+    let runner = MockRunner::new();
 
     let opts = DepsOpts {
         groups,
@@ -289,7 +317,14 @@ fn install_deps_installs_and_skips_already_present() {
     let report = install_deps(&opts, &runner).unwrap();
     assert_eq!(report.manager_used, "apt");
     assert!(report.installed.contains(&"curl".to_string()));
-    assert!(report.already_installed.contains(&"git".to_string()));
+    assert!(report.installed.contains(&"git".to_string()));
+    assert!(report.already_installed.is_empty());
+    // No dpkg calls should have been made.
+    let calls = runner.calls();
+    assert!(
+        calls.is_empty(),
+        "is_installed should not be called in dry-run mode"
+    );
 }
 
 #[test]
@@ -307,7 +342,7 @@ fn install_deps_group_filter_works() {
         },
     ];
 
-    let runner = MockRunner::new().with("dpkg", &["-s", "pkg-b"], MockResponse::failure());
+    let runner = MockRunner::new();
 
     let opts = DepsOpts {
         groups,

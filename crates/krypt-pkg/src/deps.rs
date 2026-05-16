@@ -133,11 +133,16 @@ pub fn install_deps(opts: &DepsOpts, runner: &dyn Runner) -> Result<DepsReport, 
         }
 
         let mut to_install: Vec<String> = Vec::new();
-        for pkg in pkgs {
-            match manager.is_installed(runner, pkg) {
-                Ok(true) => report.already_installed.push(pkg.clone()),
-                Ok(false) => to_install.push(pkg.clone()),
-                Err(e) => report.failed.push((pkg.clone(), e.to_string())),
+        if opts.dry_run {
+            // Skip is_installed check in dry-run — assume all packages need installing.
+            to_install.extend_from_slice(pkgs);
+        } else {
+            for pkg in pkgs {
+                match manager.is_installed(runner, pkg) {
+                    Ok(true) => report.already_installed.push(pkg.clone()),
+                    Ok(false) => to_install.push(pkg.clone()),
+                    Err(e) => report.failed.push((pkg.clone(), e.to_string())),
+                }
             }
         }
 
