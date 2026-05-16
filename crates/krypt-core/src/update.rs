@@ -808,14 +808,15 @@ run  = ["echo", "hi"]
 
     #[test]
     fn hook_with_false_predicate_skipped() {
-        // `platform:macos` on Linux (or any non-macos runner) will be false.
-        // We use `platform:windows` which is always false on Linux/macOS CI.
+        // Use `env:KRYPT_TEST_IMPOSSIBLE_VAR_NEVER_SET` — an env var that is
+        // guaranteed not to exist on any CI runner, so the predicate is always
+        // false on Linux, macOS, and Windows alike.
         let cfg = make_cfg_with_hooks(
             r#"
 [[hook]]
-name  = "macos-only"
+name  = "impossible-env"
 when  = "post-update"
-if    = "platform:windows"
+if    = "env:KRYPT_TEST_IMPOSSIBLE_VAR_NEVER_SET"
 run   = ["echo", "nope"]
 "#,
         );
@@ -834,11 +835,11 @@ run   = ["echo", "nope"]
         )
         .unwrap();
 
-        // On Windows CI this hook would run; we can only assert the predicate
-        // path is exercised.  The total must always be 1.
         assert_eq!(summary.total, 1);
-        // Either ran or skipped — on Windows it runs, elsewhere it skips.
-        assert_eq!(summary.ran + summary.skipped_by_predicate, 1);
+        assert_eq!(summary.ran, 0);
+        assert_eq!(summary.skipped_by_predicate, 1);
+        // Process must never have been called.
+        assert!(process.calls.borrow().is_empty());
     }
 
     // ── 4. Hook fails, ignore_failure = true → failed_ignored ────────────────
