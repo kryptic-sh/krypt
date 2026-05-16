@@ -243,10 +243,10 @@ pub fn run_menu_with(
 fn dry_run_plan(cmd: &KryptCommand, opts: &MenuOpts) -> Result<MenuReport, MenuError> {
     use std::collections::BTreeMap;
 
-    use crate::predicate::{MockPredicateEnv, eval};
+    use crate::predicate::{DefaultPredicateEnv, eval};
     use crate::runner::interpolate;
 
-    let env = MockPredicateEnv::new(Platform::current());
+    let env = DefaultPredicateEnv::new();
 
     let ctx = Context {
         captures: BTreeMap::new(),
