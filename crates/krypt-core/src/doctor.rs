@@ -14,6 +14,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::manifest::{DriftStatus, Manifest, detect_drift};
 use crate::paths::Platform;
+use crate::predicate::{DefaultPredicateEnv, eval};
 use crate::tool_config::ToolConfig;
 
 // ─── CheckStatus ────────────────────────────────────────────────────────────
@@ -268,11 +269,63 @@ pub fn doctor(opts: &DoctorOpts) -> DoctorReport {
         manifest: manifest_check,
         platform: platform_check,
         package_manager: package_manager_check,
-        hooks: CheckStatus::NotApplicable("pending #43".into()),
+        hooks: check_hooks(krypt_cfg.as_ref()),
     }
 }
 
 // ─── individual checks ────────────────────────────────────────────────────
+
+fn check_hooks(cfg: Option<&crate::config::Config>) -> CheckStatus<String> {
+    let Some(cfg) = cfg else {
+        return CheckStatus::NotApplicable("config not loaded".into());
+    };
+
+    // Only post-update hooks today.
+    let post_update: Vec<_> = cfg
+        .hooks
+        .iter()
+        .filter(|h| h.when == "post-update")
+        .collect();
+
+    let total = post_update.len();
+
+    if total == 0 {
+        return CheckStatus::NotApplicable("none configured".into());
+    }
+
+    // Dry-evaluate predicates using config [paths] overrides.
+    let mut resolver = crate::paths::Resolver::new();
+    resolver = resolver.with_overrides(cfg.paths.clone().into_iter().collect());
+    let env = DefaultPredicateEnv::with_resolver(resolver);
+
+    let mut active = 0usize;
+    let mut platform_skipped = 0usize;
+    let mut parse_errors = 0usize;
+
+    for hook in &post_update {
+        match &hook.r#if {
+            None => active += 1,
+            Some(pred) => match eval(pred, &env) {
+                Ok(true) => active += 1,
+                Ok(false) => platform_skipped += 1,
+                Err(_) => parse_errors += 1,
+            },
+        }
+    }
+
+    if parse_errors > 0 {
+        CheckStatus::Warn(format!(
+            "{total} post-update, {parse_errors} predicate parse error(s) \
+             (run `krypt update --dry-run`)"
+        ))
+    } else if platform_skipped > 0 {
+        CheckStatus::Ok(format!(
+            "{total} post-update ({active} active, {platform_skipped} platform-skipped)"
+        ))
+    } else {
+        CheckStatus::Ok(format!("{total} post-update ({active} active)"))
+    }
+}
 
 fn check_tool_config(path: &Path) -> (CheckStatus<String>, Option<ToolConfig>) {
     match ToolConfig::load(path) {

@@ -19,7 +19,7 @@ use krypt_core::paths::{Platform, Resolver};
 use krypt_core::runner::Notifier as _;
 use krypt_core::setup::{RealGitConfig, RealPrompter, SetupError, SetupOpts, YesPrompter};
 use krypt_core::tool_config::ToolConfig;
-use krypt_core::update::{UpdateError, UpdateOpts, update};
+use krypt_core::update::{HookSummary, UpdateError, UpdateOpts, update};
 use krypt_pkg::deps::{DepsError, DepsOpts, install_deps};
 use krypt_pkg::manager::RealRunner;
 
@@ -238,7 +238,7 @@ struct UpdateArgs {
     #[arg(long)]
     dry_run: bool,
 
-    /// (No-op) Accept the flag for forward compatibility when hooks are implemented.
+    /// Skip all post-update hooks.
     #[arg(long)]
     skip_hooks: bool,
 
@@ -737,16 +737,10 @@ fn cmd_update(args: UpdateArgs) -> Result<ExitCode> {
             if let Some(warn) = &report.version_warning {
                 eprintln!("{warn}");
             }
-            if report.hooks_skipped > 0 {
-                eprintln!(
-                    "warning: {n} post-update hook(s) configured but hook execution not yet \
-                     implemented — see #43",
-                    n = report.hooks_skipped,
-                );
-            }
             println!("pull:  {}", if report.pulled { "ok" } else { "up to date" });
             println!("link:");
             print_link_report(&report.link, opts.dry_run);
+            print_hook_summary(&report.hooks);
             Ok(if report.link.conflicts_skipped > 0 {
                 ExitCode::from(1)
             } else {
@@ -859,6 +853,30 @@ fn print_unlink_report(r: &UnlinkReport, dry_run: bool) {
             "  drifted (kept): {} (re-run with --force to delete)",
             r.drift_skipped
         );
+    }
+}
+
+fn print_hook_summary(h: &HookSummary) {
+    if h.total == 0 {
+        return;
+    }
+    println!("hooks:");
+    if h.dry_run {
+        println!("  (dry-run: hooks not executed)");
+        return;
+    }
+    if h.skipped_by_flag > 0 {
+        println!("  skipped (--skip-hooks): {}", h.skipped_by_flag);
+        return;
+    }
+    if h.ran > 0 {
+        println!("  ran: {}", h.ran);
+    }
+    if h.skipped_by_predicate > 0 {
+        println!("  skipped (predicate): {}", h.skipped_by_predicate);
+    }
+    if h.failed_ignored > 0 {
+        println!("  failed (ignored): {}", h.failed_ignored);
     }
 }
 

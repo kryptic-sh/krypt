@@ -10,6 +10,18 @@ patch bumps.
 
 ### Added
 
+- `krypt update` now executes `[[hook]] when = "post-update"` entries after a
+  successful pull + link step. Predicate evaluation (`r#if`) is performed via
+  `DefaultPredicateEnv` with `[paths]` overrides applied to the resolver.
+  `--skip-hooks` bypasses execution; `--dry-run` evaluates predicates and prints
+  a hook plan without spawning processes. Failure respects `ignore_failure`:
+  `true` logs a warning and continues, `false` returns
+  `UpdateError::Hook { name, source }` and stops. New `HookSummary` struct
+  tracks `total`, `ran`, `skipped_by_predicate`, `skipped_by_flag`,
+  `failed_ignored`, and `dry_run`. `krypt-core::doctor` hooks check replaced
+  with real predicate dry-evaluation: reports active vs. platform-skipped count,
+  warns on predicate parse errors (#43).
+
 - `krypt-core::predicate` module — predicate grammar + evaluator for `if =`
   conditions in `[[command]]` / `[[hook]]` steps. Five predicate types:
   `command_exists:<name>` (uses `which`), `env:VAR` / `env:VAR=value`,
@@ -71,6 +83,13 @@ patch bumps.
   arbitrary groups deferred to issue #45 (#25).
 
 ### Changed
+
+- **Breaking**: `UpdateReport.hooks_skipped: usize` replaced by
+  `UpdateReport.hooks: HookSummary`. `HookSummary` carries `total`, `ran`,
+  `skipped_by_predicate`, `skipped_by_flag`, `failed_ignored`, and `dry_run`
+  fields. The old field was always a stub (never incremented); any code reading
+  `hooks_skipped` must be updated to read `hooks.total` or the appropriate
+  counter (#43).
 
 - `krypt-core::runner::RealNotifier` (stderr stub) replaced by
   `krypt-core::notify::AutoNotifier`. `AutoNotifier` is re-exported from
