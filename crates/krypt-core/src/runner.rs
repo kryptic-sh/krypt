@@ -441,12 +441,7 @@ pub fn execute_steps(
         }
 
         // ── Conflicting ignore_failure + on_fail warning ────────────────────
-        if step.ignore_failure
-            && step
-                .on_fail
-                .as_deref()
-                .is_some_and(|of| of != "ignore")
-        {
+        if step.ignore_failure && step.on_fail.as_deref().is_some_and(|of| of != "ignore") {
             tracing::warn!(
                 step_index = idx,
                 on_fail = %step.on_fail.as_deref().unwrap_or(""),
