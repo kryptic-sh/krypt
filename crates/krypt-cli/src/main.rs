@@ -14,6 +14,7 @@ use krypt_core::doctor::{DoctorOpts, doctor};
 use krypt_core::init::{InitError, InitOpts, init};
 use krypt_core::manifest::{DriftStatus, Manifest, detect_drift};
 use krypt_core::paths::{Platform, Resolver};
+use krypt_core::setup::{RealGitConfig, RealPrompter, SetupError, SetupOpts, YesPrompter};
 use krypt_core::tool_config::ToolConfig;
 use krypt_core::update::{UpdateError, UpdateOpts, update};
 use krypt_pkg::deps::{DepsError, DepsOpts, install_deps};
@@ -157,6 +158,13 @@ enum Command {
     /// checks pass, 1 when one or more need attention.
     Doctor(DoctorArgs),
 
+    /// Run the interactive setup wizard defined by `[prompts.*]` sections.
+    ///
+    /// Reads prompt sections from `.krypt.toml`, asks the user questions, and
+    /// writes the collected values to destination files using the section's
+    /// configured writer (gitconfig, hypr_vars, env, generic_template).
+    Setup(SetupArgs),
+
     /// Install packages listed in `[[deps]]` using the appropriate package manager.
     ///
     /// Auto-detects the right manager for the current OS. Use `--manager` to
@@ -295,6 +303,28 @@ struct DepsArgs {
 }
 
 #[derive(clap::Args, Debug)]
+struct SetupArgs {
+    /// Path to `.krypt.toml`. Defaults to `.krypt.toml` in CWD; falls back to
+    /// the repo path from the tool config if present.
+    #[arg(long, default_value = ".krypt.toml")]
+    config: PathBuf,
+
+    /// Run only the comma-separated list of `[prompts.<name>]` sections.
+    /// If omitted, all sections are run in BTreeMap order.
+    #[arg(long, value_delimiter = ',')]
+    prompts: Option<Vec<String>>,
+
+    /// Non-interactive: pre-fill every field with its computed default.
+    /// Exits with an error if a required field has no default.
+    #[arg(long)]
+    yes: bool,
+
+    /// Parse and collect values but do not write any destination files.
+    #[arg(long)]
+    dry_run: bool,
+}
+
+#[derive(clap::Args, Debug)]
 struct DeployArgs {
     /// Path to `.krypt.toml`. Defaults to `.krypt.toml` in the cwd.
     #[arg(long, default_value = ".krypt.toml")]
@@ -345,6 +375,7 @@ fn main() -> Result<ExitCode> {
         Some(Command::Update(args)) => cmd_update(args),
         Some(Command::Adopt(args)) => cmd_adopt(args),
         Some(Command::AdoptEdits(args)) => cmd_adopt_edits(args),
+        Some(Command::Setup(args)) => cmd_setup(args),
         Some(Command::Doctor(args)) => cmd_doctor(args),
         Some(Command::Deps(args)) => cmd_deps(args),
     }
@@ -356,6 +387,103 @@ fn cmd_version() -> Result<ExitCode> {
     println!("  pkg:      {}", krypt_pkg::VERSION);
     println!("  platform: {}", krypt_platform::VERSION);
     Ok(ExitCode::SUCCESS)
+}
+
+fn cmd_setup(args: SetupArgs) -> Result<ExitCode> {
+    // Resolve config path: CLI arg first, then tool config repo, then CWD default.
+    let config_path = if args.config.exists() {
+        args.config.clone()
+    } else {
+        let tc_path = ToolConfig::default_path()
+            .map_err(|e| color_eyre::eyre::eyre!("resolving tool config path: {e}"))?;
+        if let Ok(Some(tc)) = ToolConfig::load(&tc_path) {
+            let repo_cfg = tc.repo.path.join(".krypt.toml");
+            if repo_cfg.exists() {
+                repo_cfg
+            } else {
+                args.config.clone()
+            }
+        } else {
+            args.config.clone()
+        }
+    };
+
+    let cfg = krypt_core::config::parse_file(&config_path)
+        .map_err(|e| color_eyre::eyre::eyre!("loading config: {e}"))?;
+
+    let sections = args.prompts.unwrap_or_default();
+
+    let opts = SetupOpts {
+        sections: sections.clone(),
+        yes: args.yes,
+        prompt_sections: cfg.prompts.clone(),
+    };
+
+    // Build per-section destination and source paths from [[template]] entries.
+    // A template's `prompts` list names the sections that write to its `dst`.
+    let mut dsts = std::collections::BTreeMap::new();
+    let mut srcs = std::collections::BTreeMap::new();
+    let resolver = Resolver::new();
+    for tmpl in &cfg.templates {
+        for section_name in &tmpl.prompts {
+            let dst_str = resolver
+                .resolve(&tmpl.dst)
+                .unwrap_or_else(|_| tmpl.dst.clone());
+            if !args.dry_run {
+                dsts.insert(section_name.clone(), PathBuf::from(dst_str));
+                srcs.insert(section_name.clone(), PathBuf::from(&tmpl.src));
+            }
+        }
+    }
+
+    let result = if args.yes {
+        let mut p = YesPrompter;
+        let git = RealGitConfig;
+        krypt_core::setup::setup_with_destinations_and_srcs(&opts, &dsts, &srcs, &mut p, &git)
+    } else {
+        let mut p = RealPrompter;
+        let git = RealGitConfig;
+        krypt_core::setup::setup_with_destinations_and_srcs(&opts, &dsts, &srcs, &mut p, &git)
+    };
+
+    match result {
+        Ok(report) => {
+            let dry_label = if args.dry_run { " (dry-run)" } else { "" };
+            println!("\nsetup complete{dry_label}:");
+            println!("  sections: {}", report.sections_run.join(", "));
+            println!("  fields:   {}", report.fields_collected);
+            if !args.dry_run {
+                for f in &report.files_written {
+                    println!("  wrote:    {}", f.display());
+                }
+            }
+            if !report.skipped_by_requires.is_empty() {
+                println!(
+                    "  skipped (requires):  {}",
+                    report.skipped_by_requires.join(", ")
+                );
+            }
+            Ok(ExitCode::SUCCESS)
+        }
+        Err(SetupError::UnknownPromptSection(name)) => {
+            eprintln!("error: unknown prompt section {name:?}");
+            Ok(ExitCode::from(2))
+        }
+        Err(SetupError::UnknownWriter(w)) => {
+            eprintln!("error: unknown writer {w:?}");
+            Ok(ExitCode::from(2))
+        }
+        Err(SetupError::RequiredFieldHasNoDefault { key }) => {
+            eprintln!(
+                "error: required field {key:?} has no default; cannot run unattended (--yes)"
+            );
+            Ok(ExitCode::from(2))
+        }
+        Err(e) => {
+            eprintln!("error: {e}");
+            Ok(ExitCode::from(1))
+        }
+    }
 }
 
 fn cmd_validate(path: PathBuf) -> Result<ExitCode> {

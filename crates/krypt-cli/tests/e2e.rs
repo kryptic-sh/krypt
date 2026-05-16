@@ -563,3 +563,143 @@ fn test_doctor() {
     assert!(parsed["platform"].is_object());
     assert!(parsed["manifest"].is_object());
 }
+
+/// `krypt setup --dry-run` — with a config that has a `[prompts.*]` section,
+/// exits 0, prints "dry-run", and does NOT write any destination files.
+#[test]
+fn test_setup_dry_run() {
+    let env = Env::new();
+    init_bare(&env);
+
+    let rp = repo_path(&env);
+    let home_str = toml_path(env.home.path());
+
+    // A minimal config with one prompts section and a corresponding [[template]].
+    // The field has a literal default so --yes / dry-run works without interaction.
+    let krypt_toml = format!(
+        concat!(
+            "[[template]]\n",
+            "src = \"env.template\"\n",
+            "dst = \"{home}/.env_out\"\n",
+            "prompts = [\"myenv\"]\n",
+            "\n",
+            "[prompts.myenv]\n",
+            "heading = \"Test env\"\n",
+            "writer = \"env\"\n",
+            "fields = [\n",
+            "  {{ key = \"GREETING\", prompt = \"Greeting\", default = \"hello\" }},\n",
+            "]\n",
+        ),
+        home = home_str,
+    );
+    fs::write(rp.join(".krypt.toml"), &krypt_toml).expect("write .krypt.toml");
+    fs::write(rp.join("env.template"), b"GREETING=hello\n").expect("write template");
+
+    let dst = env.path(".env_out");
+    let config_path = rp.join(".krypt.toml");
+
+    let output = cmd(&env)
+        .args([
+            "setup",
+            "--config",
+            &config_path.to_string_lossy(),
+            "--dry-run",
+            "--yes",
+        ])
+        .output()
+        .expect("run setup --dry-run");
+
+    assert!(
+        output.status.success(),
+        "setup --dry-run should exit 0; stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let stdout = String::from_utf8_lossy(&output.stdout).into_owned();
+    assert!(
+        stdout.contains("dry-run"),
+        "output should mention dry-run: {stdout}"
+    );
+    assert!(!dst.exists(), "dry-run must not write destination file");
+}
+
+/// `krypt setup --yes` — with all fields having resolvable defaults, exits 0
+/// and writes destination files.
+#[test]
+fn test_setup_yes() {
+    let env = Env::new();
+    init_bare(&env);
+
+    let rp = repo_path(&env);
+    let home_str = toml_path(env.home.path());
+
+    // Config with two prompt sections: one env writer, one hypr_vars writer.
+    // All fields have literal defaults so --yes can proceed without TTY.
+    let krypt_toml = format!(
+        concat!(
+            "[[template]]\n",
+            "src = \"env.template\"\n",
+            "dst = \"{home}/.env_setup_out\"\n",
+            "prompts = [\"myenv\"]\n",
+            "\n",
+            "[[template]]\n",
+            "src = \"hypr.template.conf\"\n",
+            "dst = \"{home}/.hypr_setup_out\"\n",
+            "prompts = [\"myhypr\"]\n",
+            "\n",
+            "[prompts.myenv]\n",
+            "heading = \"Env section\"\n",
+            "writer = \"env\"\n",
+            "fields = [\n",
+            "  {{ key = \"EDITOR\", prompt = \"Editor\", default = \"nvim\" }},\n",
+            "]\n",
+            "\n",
+            "[prompts.myhypr]\n",
+            "heading = \"Hypr section\"\n",
+            "writer = \"hypr_vars\"\n",
+            "fields = [\n",
+            "  {{ key = \"terminal\", prompt = \"Terminal\", default = \"alacritty\" }},\n",
+            "]\n",
+        ),
+        home = home_str,
+    );
+    fs::write(rp.join(".krypt.toml"), &krypt_toml).expect("write .krypt.toml");
+    fs::write(rp.join("env.template"), b"").expect("write env template");
+    fs::write(rp.join("hypr.template.conf"), b"").expect("write hypr template");
+
+    let config_path = rp.join(".krypt.toml");
+    let env_dst = env.path(".env_setup_out");
+    let hypr_dst = env.path(".hypr_setup_out");
+
+    let output = cmd(&env)
+        .args(["setup", "--config", &config_path.to_string_lossy(), "--yes"])
+        .output()
+        .expect("run setup --yes");
+
+    assert!(
+        output.status.success(),
+        "setup --yes should exit 0; stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let stdout = String::from_utf8_lossy(&output.stdout).into_owned();
+    assert!(
+        stdout.contains("setup complete"),
+        "output should confirm setup complete: {stdout}"
+    );
+
+    // Destination files must exist and contain expected content.
+    assert!(env_dst.exists(), "env destination file should be written");
+    let env_content = fs::read_to_string(&env_dst).expect("read env output");
+    assert!(
+        env_content.contains("export EDITOR=nvim"),
+        "env file should contain EDITOR: {env_content}"
+    );
+
+    assert!(hypr_dst.exists(), "hypr destination file should be written");
+    let hypr_content = fs::read_to_string(&hypr_dst).expect("read hypr output");
+    assert!(
+        hypr_content.contains("$terminal = alacritty"),
+        "hypr file should contain terminal: {hypr_content}"
+    );
+}

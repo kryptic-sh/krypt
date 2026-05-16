@@ -10,6 +10,30 @@ patch bumps.
 
 ### Added
 
+- `krypt setup [--config <path>] [--prompts <a,b>] [--yes] [--dry-run]`
+  subcommand — interactive wizard driven by `[prompts.*]` sections in
+  `.krypt.toml`. Collects field values via `dialoguer` prompts and writes them
+  to destination files using one of four built-in writers: `gitconfig` (merge
+  into git-style INI), `hypr_vars` (patch `$key = value` lines), `env` (write
+  `export K=V` lines), `generic_template` (substitute `{{key}}` placeholders).
+  `--yes` fills every field from its computed default (errors on missing
+  required defaults). `--dry-run` collects values but skips all writes.
+  `--prompts a,b` runs only the named sections (#18).
+- `krypt_core::setup` module public API: `SetupOpts`, `SetupReport`,
+  `SetupError`, `Prompter` trait (`ask_string` / `ask_bool` / `ask_int`),
+  `RealPrompter` (dialoguer), `YesPrompter` (non-interactive),
+  `ScriptedPrompter` (tests), `GitConfig` trait, `RealGitConfig` (shells to
+  `git config --get`), `FakeGitConfig` (tests), `setup`,
+  `setup_with_destinations`, `setup_with_destinations_and_srcs`,
+  `write_generic_template`. Default resolvers: `git:<key>`, `env:<VAR>`,
+  `field:<key>`, `read_var:<name>` (reads `$name = value` from destination
+  file). Atomic writes via tmp+rename on all three OSes (#18).
+- 17 unit tests in `setup.rs` covering all writers, all `default_from`
+  resolvers, `requires` gating, `--yes` success/error paths, `--prompts` filter,
+  and `generic_template` end-to-end. Two new e2e tests in
+  `crates/krypt-cli/tests/e2e.rs`: `test_setup_dry_run` and `test_setup_yes`
+  (#18).
+
 - `krypt deps [--manager <name>] [--group <name>] [--config <path>] [--dry-run]`
   subcommand — installs every `[[deps]]` group's packages using the detected (or
   specified) package manager. Groups are filtered by `required_platforms` before

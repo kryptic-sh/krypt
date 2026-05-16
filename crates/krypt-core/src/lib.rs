@@ -27,7 +27,9 @@
 //! - [`doctor`]      — `krypt doctor` diagnostic health-check: prints one
 //!   status line per check and serializes to JSON for `--json` (issue #20)
 //!
-//! Planned for Phase 1: `runner`.
+//! - [`setup`]       — `krypt setup` interactive wizard: reads `[prompts]`
+//!   sections, asks questions, and applies one of four built-in writers
+//!   (gitconfig, hypr_vars, env, generic_template) (issue #18).
 
 #![forbid(unsafe_code)]
 #![warn(missing_docs)]
@@ -41,6 +43,7 @@ pub mod include;
 pub mod init;
 pub mod manifest;
 pub mod paths;
+pub mod setup;
 pub mod tool_config;
 pub mod update;
 
