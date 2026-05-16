@@ -71,6 +71,12 @@ pub struct Meta {
     /// `--strict`). Format: SemVer.
     #[serde(default)]
     pub krypt_min: Option<String>,
+
+    /// Override the notification backend. Accepted values: `auto` (default),
+    /// `notify-send`, `osascript`, `terminal-notifier`, `powershell`, `stderr`.
+    /// Unknown values produce a warning and fall through to auto-detect.
+    #[serde(default)]
+    pub notify_backend: Option<String>,
 }
 
 /// `[[link]]` entry — a file (or glob) to deploy from the repo to a path

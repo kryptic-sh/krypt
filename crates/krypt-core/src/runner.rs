@@ -33,6 +33,9 @@
 //! injected — `run = ["echo", "hi"]` must reference a real binary in `PATH`.
 //! Shell builtins (e.g. `echo` on Windows outside Git Bash) are the caller's
 //! responsibility. Path-containing args are passed through unchanged.
+//!
+//! [`AutoNotifier`] auto-detects the best notification backend at
+//! construction. Pin [`crate::notify::NotifyBackend::Stderr`] in tests.
 
 #![allow(clippy::result_large_err)]
 
@@ -136,11 +139,9 @@ pub trait ProcessExec {
 
 /// Abstraction over desktop notification, allowing test mocks.
 ///
-/// # Implementation note
-///
-/// [`RealNotifier`] currently prints to stderr (`notice: <title> — <body>`).
-/// Real desktop notification (libnotify on Linux, `osascript` on macOS,
-/// Windows toast via `notify-rust`) is tracked in issue #26.
+/// The production implementation is [`AutoNotifier`], which shells out to
+/// `notify-send` (Linux), `osascript` / `terminal-notifier` (macOS), or
+/// PowerShell (Windows). See [`crate::notify`] for details.
 pub trait Notifier {
     /// Send a desktop notification with the given title and body.
     fn notify(&self, title: &str, body: &str) -> Result<(), io::Error>;
@@ -228,18 +229,13 @@ impl ProcessExec for RealProcessExec {
     }
 }
 
-/// Stub notifier that prints to stderr.
+/// Auto-detecting notifier.
 ///
-/// Real desktop notification (libnotify on Linux, `osascript` on macOS,
-/// Windows toast) is tracked in issue #26.
-pub struct RealNotifier;
-
-impl Notifier for RealNotifier {
-    fn notify(&self, title: &str, body: &str) -> Result<(), io::Error> {
-        eprintln!("notice: {title} — {body}");
-        Ok(())
-    }
-}
+/// Selects the best available backend via [`crate::notify::detect`] at
+/// construction time. For deterministic tests, prefer
+/// [`crate::notify::AutoNotifier::with_backend`] with
+/// [`crate::notify::NotifyBackend::Stderr`].
+pub use crate::notify::AutoNotifier;
 
 /// Interactive prompter backed by stdin readline.
 ///

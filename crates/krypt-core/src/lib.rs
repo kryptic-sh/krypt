@@ -38,6 +38,11 @@
 //!   AND (`,`). [`predicate::default_predicate_evaluator`] wires a
 //!   [`predicate::PredicateEnv`] into the runner's closure parameter
 //!   (issue #24).
+//! - [`notify`]      — cross-platform notification backends: `notify-send`
+//!   (Linux), `osascript` / `terminal-notifier` (macOS), PowerShell
+//!   (Windows), with `stderr` fallback. [`notify::AutoNotifier`] implements
+//!   the [`runner::Notifier`] trait and replaces the old `RealNotifier` stub
+//!   (issue #26).
 
 #![forbid(unsafe_code)]
 #![warn(missing_docs)]
@@ -50,6 +55,7 @@ pub mod doctor;
 pub mod include;
 pub mod init;
 pub mod manifest;
+pub mod notify;
 pub mod paths;
 pub mod predicate;
 pub mod runner;

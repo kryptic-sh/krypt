@@ -27,10 +27,35 @@ patch bumps.
   `[[command]]` or `[[hook]]` declaratively. Public surface: `execute_steps`,
   `execute_command`, `execute_hook`, `interpolate`, `Context`, `RunReport`,
   `RunnerError`, `ProcessExec` / `Notifier` / `Prompter` traits,
-  `RealProcessExec`, `RealNotifier`, `RealPrompter`, and `Mock*` test doubles.
-  Desktop notification stub prints to stderr — issue #26 will add libnotify /
-  macOS osascript / Windows toast. Hook integration into `krypt update` is
-  tracked in issue #43 (#23).
+  `RealProcessExec`, `RealPrompter`, and `Mock*` test doubles. Hook integration
+  into `krypt update` is tracked in issue #43 (#23).
+
+- `krypt-core::notify` module — cross-platform notification backend layer. Four
+  backends: `notify-send` (Linux/BSD), `terminal-notifier` or `osascript`
+  (macOS), PowerShell `System.Windows.Forms.MessageBox` (Windows), `stderr`
+  (always-available fallback). `detect(override_name)` auto-selects via
+  `which::which` in platform-appropriate order; explicit override wins.
+  `command_for` is a pure function returning `(program, args)` — testable
+  without spawning. AppleScript strings are escaped (backslash + double-quote).
+  PowerShell values are passed via `$env:KRYPT_NOTIFY_TITLE` /
+  `$env:KRYPT_NOTIFY_BODY` to avoid shell-escaping. `NotifyError` variants:
+  `Spawn`, `NonZeroExit`, `NoBackend` (all ≤ 128 bytes via boxing).
+  `[meta] notify_backend` config field added to `Meta` for repo-level override
+  (#26).
+
+- `krypt notify <title> <body> [--backend <name>] [--config <path>]` subcommand
+  — direct notification dispatch for scripting and manual testing. Precedence:
+  `--backend` flag > `[meta] notify_backend` from config > auto-detect. Exits 0
+  on success, 1 on failure (error printed to stderr). No output on success
+  (#26).
+
+### Changed
+
+- `krypt-core::runner::RealNotifier` (stderr stub) replaced by
+  `krypt-core::notify::AutoNotifier`. `AutoNotifier` is re-exported from
+  `runner` for consumers that construct it there. Use
+  `AutoNotifier::with_backend(NotifyBackend::Stderr)` in tests to prevent real
+  desktop notifications from firing during `cargo test` (#26).
 
 ## [0.1.0] - 2026-05-16
 

@@ -13,7 +13,9 @@ use krypt_core::deploy::{DeployOpts, LinkReport, UnlinkReport, link, relink, unl
 use krypt_core::doctor::{DoctorOpts, doctor};
 use krypt_core::init::{InitError, InitOpts, init};
 use krypt_core::manifest::{DriftStatus, Manifest, detect_drift};
+use krypt_core::notify::{AutoNotifier, NotifyBackend, detect};
 use krypt_core::paths::{Platform, Resolver};
+use krypt_core::runner::Notifier as _;
 use krypt_core::setup::{RealGitConfig, RealPrompter, SetupError, SetupOpts, YesPrompter};
 use krypt_core::tool_config::ToolConfig;
 use krypt_core::update::{UpdateError, UpdateOpts, update};
@@ -172,6 +174,22 @@ enum Command {
     /// target a single group. Use `--dry-run` to see what would be installed
     /// without touching the system.
     Deps(DepsArgs),
+
+    /// Send a desktop notification.
+    ///
+    /// Dispatches a notification via the best available backend for the
+    /// current platform. On Linux: `notify-send`. On macOS: `terminal-notifier`
+    /// (if installed) or `osascript`. On Windows: PowerShell
+    /// `System.Windows.Forms.MessageBox`. Falls back to stderr when nothing
+    /// is available.
+    ///
+    /// Windows note: BurntToast is NOT used — `System.Windows.Forms.MessageBox`
+    /// ships with every .NET install. BurntToast requires `Install-Module
+    /// BurntToast` and is a third-party dependency.
+    ///
+    /// Backend values for `--backend`: auto, notify-send, osascript,
+    /// terminal-notifier, powershell, stderr.
+    Notify(NotifyArgs),
 }
 
 #[derive(clap::Args, Debug)]
@@ -303,6 +321,28 @@ struct DepsArgs {
 }
 
 #[derive(clap::Args, Debug)]
+struct NotifyArgs {
+    /// Notification title.
+    title: String,
+
+    /// Notification body.
+    body: String,
+
+    /// Override the notification backend.
+    ///
+    /// Values: auto, notify-send, osascript, terminal-notifier, powershell, stderr.
+    /// Overrides `[meta] notify_backend` from config.
+    #[arg(long)]
+    backend: Option<String>,
+
+    /// Path to `.krypt.toml` to read `[meta] notify_backend` from.
+    /// Defaults to `.krypt.toml` in the current directory; silently ignored
+    /// if the file does not exist.
+    #[arg(long, default_value = ".krypt.toml")]
+    config: PathBuf,
+}
+
+#[derive(clap::Args, Debug)]
 struct SetupArgs {
     /// Path to `.krypt.toml`. Defaults to `.krypt.toml` in CWD; falls back to
     /// the repo path from the tool config if present.
@@ -378,6 +418,7 @@ fn main() -> Result<ExitCode> {
         Some(Command::Setup(args)) => cmd_setup(args),
         Some(Command::Doctor(args)) => cmd_doctor(args),
         Some(Command::Deps(args)) => cmd_deps(args),
+        Some(Command::Notify(args)) => cmd_notify(args),
     }
 }
 
@@ -986,4 +1027,28 @@ fn cmd_doctor(args: DoctorArgs) -> Result<ExitCode> {
     } else {
         ExitCode::from(1)
     })
+}
+
+fn cmd_notify(args: NotifyArgs) -> Result<ExitCode> {
+    // Precedence: --backend flag > [meta] notify_backend > auto-detect.
+    let override_name: Option<String> = if args.backend.is_some() {
+        args.backend.clone()
+    } else if args.config.exists() {
+        krypt_core::config::parse_file(&args.config)
+            .ok()
+            .and_then(|c| c.meta.notify_backend)
+    } else {
+        None
+    };
+
+    let backend: NotifyBackend = detect(override_name.as_deref());
+    let notifier = AutoNotifier::with_backend(backend);
+
+    match notifier.notify(&args.title, &args.body) {
+        Ok(()) => Ok(ExitCode::SUCCESS),
+        Err(e) => {
+            eprintln!("error: {e}");
+            Ok(ExitCode::from(1))
+        }
+    }
 }

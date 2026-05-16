@@ -199,6 +199,7 @@ fn merge_meta(base: Meta, later: Meta) -> Meta {
         name: nonempty_or(later.name, base.name),
         description: nonempty_or(later.description, base.description),
         krypt_min: later.krypt_min.or(base.krypt_min),
+        notify_backend: later.notify_backend.or(base.notify_backend),
     }
 }
 

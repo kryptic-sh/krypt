@@ -623,6 +623,33 @@ fn test_setup_dry_run() {
     assert!(!dst.exists(), "dry-run must not write destination file");
 }
 
+/// `krypt notify hello world --backend stderr` — exits 0, stderr contains both words.
+#[test]
+fn test_notify_stderr() {
+    let env = Env::new();
+
+    let output = cmd(&env)
+        .args(["notify", "hello", "world", "--backend", "stderr"])
+        .output()
+        .expect("run notify");
+
+    assert!(
+        output.status.success(),
+        "notify --backend stderr should exit 0; stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let stderr = String::from_utf8_lossy(&output.stderr).into_owned();
+    assert!(
+        stderr.contains("hello"),
+        "stderr should contain title 'hello': {stderr}"
+    );
+    assert!(
+        stderr.contains("world"),
+        "stderr should contain body 'world': {stderr}"
+    );
+}
+
 /// `krypt setup --yes` — with all fields having resolvable defaults, exits 0
 /// and writes destination files.
 #[test]
