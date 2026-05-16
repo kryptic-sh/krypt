@@ -8,6 +8,12 @@ patch bumps.
 
 ## [Unreleased]
 
+## [0.1.0] - 2026-05-16
+
+Phase 1 complete. The CLI now covers the full daily-driver loop:
+`init → link → update → diff → adopt → setup → deps → doctor`, with `unlink` and
+`relink` for teardown. Replaces the previous bash-based dotfiles tooling.
+
 ### Added
 
 - `krypt setup [--config <path>] [--prompts <a,b>] [--yes] [--dry-run]`

@@ -2215,7 +2215,7 @@ dependencies = [
 
 [[package]]
 name = "krypt-cli"
-version = "0.0.2"
+version = "0.1.0"
 dependencies = [
  "assert_cmd",
  "assert_fs",
@@ -2233,7 +2233,7 @@ dependencies = [
 
 [[package]]
 name = "krypt-core"
-version = "0.0.2"
+version = "0.1.0"
 dependencies = [
  "dialoguer",
  "gix",
@@ -2250,7 +2250,7 @@ dependencies = [
 
 [[package]]
 name = "krypt-pkg"
-version = "0.0.2"
+version = "0.1.0"
 dependencies = [
  "thiserror 2.0.18",
  "tracing",
@@ -2259,7 +2259,7 @@ dependencies = [
 
 [[package]]
 name = "krypt-platform"
-version = "0.0.2"
+version = "0.1.0"
 dependencies = [
  "tracing",
 ]
