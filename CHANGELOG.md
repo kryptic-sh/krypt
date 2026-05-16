@@ -10,6 +10,31 @@ patch bumps.
 
 ### Added
 
+- Generic `krypt <group> <name>` dispatcher. Any `[[command]]` group defined in
+  `.krypt.toml` (e.g. `battery`, `kanata`, `tmux`) is now reachable without
+  hardcoding a clap variant. `krypt <group>` lists all commands in the group;
+  `krypt <group> <name>` runs the named command; `--dry-run` prints the step
+  plan without executing; args after `--` forward as `{0}`..`{9}`. Unknown group
+  → exit 1, stderr shows `unknown group "<name>"` and lists all defined groups
+  with command counts. Unknown command within a group → exit 2, stderr lists
+  available names. Implemented via `#[command(external_subcommand)]` on the
+  `Command` enum; clap captures unknown subcommands as
+  `Command::External(Vec<String>)`, then `cmd_external` parses the remaining
+  args manually. Builtin subcommands always take precedence over user-defined
+  groups with the same name (#45).
+
+- `krypt-core::dispatch` module — generic group dispatcher. Public API:
+  `list_in_group(group, opts, show_all)`, `run_in_group(group, name, opts)`,
+  `run_in_group_with(group, name, opts, process, notifier, prompter)`,
+  `list_groups(opts)`. Error type `DispatchError` with variants `ConfigLoad`,
+  `GroupNotFound { name, available }`,
+  `CommandNotFound { group, name, available_in_group }`,
+  `PlatformMismatch { group, name, required, current }`, `Runner` — large
+  variants boxed to keep enum ≤ 128 bytes. Nine unit tests cover platform
+  filtering, not-found, platform mismatch, step execution + arg forwarding,
+  dry-run, `list_groups`, `GroupNotFound` for both `run_in_group` and
+  `list_in_group`, and mixed-group scenarios (#45).
+
 - `krypt update` now executes `[[hook]] when = "post-update"` entries after a
   successful pull + link step. Predicate evaluation (`r#if`) is performed via
   `DefaultPredicateEnv` with `[paths]` overrides applied to the resolver.
@@ -83,6 +108,16 @@ patch bumps.
   arbitrary groups deferred to issue #45 (#25).
 
 ### Changed
+
+- `krypt-core::menu` module renamed to `krypt-core::dispatch`. All public types
+  and functions renamed: `MenuOpts` → `DispatchOpts`, `MenuListEntry` →
+  `DispatchListEntry`, `MenuReport` → `DispatchReport`, `MenuError` →
+  `DispatchError`, `MenuError::MenuNotFound` → `DispatchError::CommandNotFound`
+  (now carries `group` field), `list_menus` → `list_in_group` (takes `group`
+  parameter), `run_menu` → `run_in_group`, `run_menu_with` →
+  `run_in_group_with`. The `krypt menu` CLI subcommand is unchanged; it now
+  calls `dispatch::run_in_group("menu", …)` internally. Internal API only; no
+  published crate consumers (#45).
 
 - **Breaking**: `UpdateReport.hooks_skipped: usize` replaced by
   `UpdateReport.hooks: HookSummary`. `HookSummary` carries `total`, `ran`,

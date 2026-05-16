@@ -43,10 +43,9 @@
 //!   (Windows), with `stderr` fallback. [`notify::AutoNotifier`] implements
 //!   the [`runner::Notifier`] trait and replaces the old `RealNotifier` stub
 //!   (issue #26).
-//! - [`menu`]        — `krypt menu` dispatcher: list and run
-//!   `[[command]] group = "menu"` entries from `.krypt.toml`. Wires the
-//!   runner (#23), predicate evaluator (#24), and notifier (#26) into the
-//!   first user-facing command group (issue #25).
+//! - [`dispatch`]    — generic `krypt <group> <name>` dispatcher: list and run
+//!   `[[command]]` entries from `.krypt.toml` for any group. Renamed from
+//!   `menu` in issue #45; `krypt menu` is now `dispatch::run_in_group("menu", …)`.
 
 #![forbid(unsafe_code)]
 #![warn(missing_docs)]
@@ -55,11 +54,11 @@ pub mod adopt;
 pub mod config;
 pub mod copy;
 pub mod deploy;
+pub mod dispatch;
 pub mod doctor;
 pub mod include;
 pub mod init;
 pub mod manifest;
-pub mod menu;
 pub mod notify;
 pub mod paths;
 pub mod predicate;

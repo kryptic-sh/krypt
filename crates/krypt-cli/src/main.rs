@@ -10,10 +10,10 @@ use clap::{Parser, Subcommand, ValueEnum};
 use color_eyre::Result;
 use krypt_core::adopt::{AdoptEditsOpts, AdoptError, AdoptOpts, adopt, adopt_edits};
 use krypt_core::deploy::{DeployOpts, LinkReport, UnlinkReport, link, relink, unlink};
+use krypt_core::dispatch::{DispatchError, DispatchOpts, list_in_group, run_in_group};
 use krypt_core::doctor::{DoctorOpts, doctor};
 use krypt_core::init::{InitError, InitOpts, init};
 use krypt_core::manifest::{DriftStatus, Manifest, detect_drift};
-use krypt_core::menu::{MenuError, MenuOpts, list_menus, run_menu};
 use krypt_core::notify::{AutoNotifier, NotifyBackend, detect};
 use krypt_core::paths::{Platform, Resolver};
 use krypt_core::runner::Notifier as _;
@@ -198,10 +198,15 @@ enum Command {
     /// default; use `--all` to show everything). With NAME, runs that menu's
     /// step sequence. Positional arguments after `--` are forwarded to steps as
     /// `{0}`..`{9}`. Use `--dry-run` to print the step plan without executing.
-    ///
-    /// Generic `krypt <group> <name>` dispatch for arbitrary groups (battery,
-    /// kanata, etc.) is tracked in issue #45.
     Menu(MenuArgs),
+
+    /// Run a command from any `[[command]]` group in `.krypt.toml`.
+    ///
+    /// `krypt <group>` lists commands in that group. `krypt <group> <name>`
+    /// runs the named command. `--dry-run` prints the plan without executing.
+    /// Args after `--` are forwarded to steps as `{0}`..`{9}`.
+    #[command(external_subcommand)]
+    External(Vec<String>),
 }
 
 #[derive(clap::Args, Debug)]
@@ -455,6 +460,7 @@ fn main() -> Result<ExitCode> {
         Some(Command::Deps(args)) => cmd_deps(args),
         Some(Command::Notify(args)) => cmd_notify(args),
         Some(Command::Menu(args)) => cmd_menu(args),
+        Some(Command::External(args)) => cmd_external(args),
     }
 }
 
@@ -1102,7 +1108,7 @@ fn resolve_menu_config(args_config: Option<PathBuf>) -> Result<PathBuf> {
 fn cmd_menu(args: MenuArgs) -> Result<ExitCode> {
     let config_path = resolve_menu_config(args.config)?;
 
-    let opts = MenuOpts {
+    let opts = DispatchOpts {
         config_path,
         args: args.args.clone(),
         dry_run: args.dry_run,
@@ -1110,9 +1116,12 @@ fn cmd_menu(args: MenuArgs) -> Result<ExitCode> {
 
     match args.name {
         None => {
-            // List all menus.
-            let entries = match list_menus(&opts, args.all) {
+            let entries = match list_in_group("menu", &opts, args.all) {
                 Ok(e) => e,
+                Err(DispatchError::GroupNotFound { .. }) => {
+                    println!("no menus defined");
+                    return Ok(ExitCode::SUCCESS);
+                }
                 Err(e) => {
                     eprintln!("error: {e}");
                     return Ok(ExitCode::from(1));
@@ -1153,7 +1162,7 @@ fn cmd_menu(args: MenuArgs) -> Result<ExitCode> {
             Ok(ExitCode::SUCCESS)
         }
 
-        Some(ref name) => match run_menu(name, &opts) {
+        Some(ref name) => match run_in_group("menu", name, &opts) {
             Ok(report) => {
                 if let Some(plan) = report.dry_run_plan {
                     print!("{plan}");
@@ -1165,8 +1174,171 @@ fn cmd_menu(args: MenuArgs) -> Result<ExitCode> {
                 }
                 Ok(ExitCode::SUCCESS)
             }
-            Err(MenuError::MenuNotFound { .. }) => {
+            Err(DispatchError::CommandNotFound { .. }) => {
                 eprintln!("error: menu {name:?} not found");
+                Ok(ExitCode::from(2))
+            }
+            Err(e) => {
+                eprintln!("error: {e}");
+                Ok(ExitCode::from(1))
+            }
+        },
+    }
+}
+
+fn cmd_external(args: Vec<String>) -> Result<ExitCode> {
+    let mut iter = args.into_iter();
+    let group = iter
+        .next()
+        .ok_or_else(|| color_eyre::eyre::eyre!("internal: missing group name"))?;
+
+    let mut name: Option<String> = None;
+    let mut dry_run = false;
+    let mut config: Option<PathBuf> = None;
+    let mut positional: Vec<String> = Vec::new();
+    let mut saw_double_dash = false;
+
+    while let Some(arg) = iter.next() {
+        if saw_double_dash {
+            positional.push(arg);
+        } else if arg == "--" {
+            saw_double_dash = true;
+        } else if arg == "--dry-run" {
+            dry_run = true;
+        } else if arg == "--config" {
+            config = iter.next().map(PathBuf::from);
+        } else if let Some(val) = arg.strip_prefix("--config=") {
+            config = Some(PathBuf::from(val));
+        } else if arg.starts_with("--") {
+            eprintln!("error: unknown flag {arg:?}");
+            return Ok(ExitCode::from(2));
+        } else if name.is_none() {
+            name = Some(arg);
+        } else {
+            positional.push(arg);
+        }
+    }
+
+    let config_path = resolve_menu_config(config)?;
+    let opts = DispatchOpts {
+        config_path,
+        args: positional,
+        dry_run,
+    };
+
+    match name {
+        None => {
+            // List mode: show all commands in the group.
+            match list_in_group(&group, &opts, false) {
+                Ok(entries) => {
+                    if entries.is_empty() {
+                        println!("no commands defined in group {group:?}");
+                        return Ok(ExitCode::SUCCESS);
+                    }
+                    let filtered_count = entries.iter().filter(|e| e.platform_filtered).count();
+                    println!("Available commands in {group}:\n");
+                    let name_width = entries.iter().map(|e| e.name.len()).max().unwrap_or(0);
+                    for entry in &entries {
+                        let platform_note = if entry.platform_filtered {
+                            format!(" ({})", entry.platform.as_deref().unwrap_or("?"))
+                        } else {
+                            String::new()
+                        };
+                        println!(
+                            "  {:<width$}  {}{}",
+                            entry.name,
+                            entry.description,
+                            platform_note,
+                            width = name_width,
+                        );
+                    }
+                    if filtered_count > 0 {
+                        println!(
+                            "\n{filtered_count} command(s) filtered out by platform \
+                             (run with --all to see)."
+                        );
+                    }
+                    Ok(ExitCode::SUCCESS)
+                }
+                Err(DispatchError::GroupNotFound {
+                    name: gname,
+                    available,
+                }) => {
+                    eprintln!(
+                        "error: unknown group {gname:?} — no [[command]] entries with group = {gname:?}"
+                    );
+                    eprintln!();
+                    if available.is_empty() {
+                        eprintln!("no groups defined in config");
+                    } else {
+                        eprintln!("available groups:");
+                        // Show command counts per group using list_groups result.
+                        let cfg_opts = DispatchOpts {
+                            config_path: opts.config_path.clone(),
+                            args: Vec::new(),
+                            dry_run: false,
+                        };
+                        for g in &available {
+                            let count = list_in_group(g, &cfg_opts, true)
+                                .map(|e| e.len())
+                                .unwrap_or(0);
+                            eprintln!("  {g:<20} ({count} commands)");
+                        }
+                    }
+                    Ok(ExitCode::from(1))
+                }
+                Err(e) => {
+                    eprintln!("error: {e}");
+                    Ok(ExitCode::from(1))
+                }
+            }
+        }
+
+        Some(ref cmd_name) => match run_in_group(&group, cmd_name, &opts) {
+            Ok(report) => {
+                if let Some(plan) = report.dry_run_plan {
+                    print!("{plan}");
+                } else {
+                    println!(
+                        "ran {group} {cmd_name}: {} steps ({} skipped, {} ignored failures)",
+                        report.steps_run, report.steps_skipped, report.steps_failed_ignored,
+                    );
+                }
+                Ok(ExitCode::SUCCESS)
+            }
+            Err(DispatchError::GroupNotFound {
+                name: gname,
+                available,
+            }) => {
+                eprintln!(
+                    "error: unknown group {gname:?} — no [[command]] entries with group = {gname:?}"
+                );
+                if !available.is_empty() {
+                    eprintln!();
+                    eprintln!("available groups:");
+                    let cfg_opts = DispatchOpts {
+                        config_path: opts.config_path.clone(),
+                        args: Vec::new(),
+                        dry_run: false,
+                    };
+                    for g in &available {
+                        let count = list_in_group(g, &cfg_opts, true)
+                            .map(|e| e.len())
+                            .unwrap_or(0);
+                        eprintln!("  {g:<20} ({count} commands)");
+                    }
+                }
+                Ok(ExitCode::from(1))
+            }
+            Err(DispatchError::CommandNotFound {
+                name: cname,
+                available_in_group,
+                ..
+            }) => {
+                eprintln!("error: command {cname:?} not found in group {group:?}");
+                if !available_in_group.is_empty() {
+                    eprintln!("available in {group}: {}", available_in_group.join(", "));
+                }
                 Ok(ExitCode::from(2))
             }
             Err(e) => {

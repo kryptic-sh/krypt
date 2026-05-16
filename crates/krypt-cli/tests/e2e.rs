@@ -810,3 +810,127 @@ fn test_menu_dry_run() {
         "output should list the echo step: {stdout}"
     );
 }
+
+/// `krypt unknown-group` — exit 1, stderr mentions "unknown group" and lists available groups.
+#[test]
+fn test_external_unknown_group() {
+    let env = Env::new();
+    init_bare(&env);
+
+    let rp = repo_path(&env);
+    let krypt_toml = concat!(
+        "[[command]]\n",
+        "group = \"menu\"\n",
+        "name = \"wifi\"\n",
+        "description = \"WiFi\"\n",
+        "steps = [{ run = [\"echo\", \"wifi\"] }]\n",
+    );
+    fs::write(rp.join(".krypt.toml"), krypt_toml).expect("write .krypt.toml");
+
+    let config_path = rp.join(".krypt.toml");
+
+    let output = cmd(&env)
+        .args(["unknown-group", "--config", &config_path.to_string_lossy()])
+        .output()
+        .expect("run unknown-group");
+
+    assert!(
+        !output.status.success(),
+        "unknown-group should exit non-zero"
+    );
+    assert_eq!(output.status.code(), Some(1));
+
+    let stderr = String::from_utf8_lossy(&output.stderr).into_owned();
+    assert!(
+        stderr.contains("unknown group"),
+        "stderr should mention 'unknown group': {stderr}"
+    );
+    assert!(
+        stderr.contains("menu"),
+        "stderr should list available group 'menu': {stderr}"
+    );
+}
+
+/// `krypt my-group` with a fixture config lists commands in that group.
+#[test]
+fn test_external_group_list() {
+    let env = Env::new();
+    init_bare(&env);
+
+    let rp = repo_path(&env);
+    let krypt_toml = concat!(
+        "[[command]]\n",
+        "group = \"my-group\"\n",
+        "name = \"do-thing\"\n",
+        "description = \"Does a thing\"\n",
+        "steps = [{ run = [\"echo\", \"hi\"] }]\n",
+    );
+    fs::write(rp.join(".krypt.toml"), krypt_toml).expect("write .krypt.toml");
+
+    let config_path = rp.join(".krypt.toml");
+
+    let output = cmd(&env)
+        .args(["my-group", "--config", &config_path.to_string_lossy()])
+        .output()
+        .expect("run my-group");
+
+    assert!(
+        output.status.success(),
+        "krypt my-group should exit 0; stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let stdout = String::from_utf8_lossy(&output.stdout).into_owned();
+    assert!(
+        stdout.contains("do-thing"),
+        "output should list the command 'do-thing': {stdout}"
+    );
+}
+
+/// `krypt my-group my-cmd --dry-run` → exit 0, prints dry-run plan.
+#[test]
+fn test_external_group_dry_run() {
+    let env = Env::new();
+    init_bare(&env);
+
+    let rp = repo_path(&env);
+    let krypt_toml = concat!(
+        "[[command]]\n",
+        "group = \"my-group\"\n",
+        "name = \"my-cmd\"\n",
+        "description = \"My command\"\n",
+        "steps = [\n",
+        "  { run = [\"echo\", \"hello\"] },\n",
+        "]\n",
+    );
+    fs::write(rp.join(".krypt.toml"), krypt_toml).expect("write .krypt.toml");
+
+    let config_path = rp.join(".krypt.toml");
+
+    let output = cmd(&env)
+        .args([
+            "my-group",
+            "my-cmd",
+            "--dry-run",
+            "--config",
+            &config_path.to_string_lossy(),
+        ])
+        .output()
+        .expect("run my-group my-cmd --dry-run");
+
+    assert!(
+        output.status.success(),
+        "krypt my-group my-cmd --dry-run should exit 0; stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let stdout = String::from_utf8_lossy(&output.stdout).into_owned();
+    assert!(
+        stdout.contains("dry-run"),
+        "output should mention 'dry-run': {stdout}"
+    );
+    assert!(
+        stdout.contains("echo"),
+        "output should show the echo step: {stdout}"
+    );
+}
