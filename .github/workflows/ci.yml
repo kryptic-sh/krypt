@@ -14,6 +14,8 @@ concurrency:
 env:
   CARGO_TERM_COLOR: always
   RUST_BACKTRACE: 1
+  # Opt JS-based actions into Node 24 ahead of the GH default flip (June 2026)
+  # to surface upstream incompatibility early.
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
 
 jobs:
@@ -22,11 +24,14 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
+        with:
+          submodules: recursive
       - uses: actions-rust-lang/setup-rust-toolchain@v1
         with:
           toolchain: stable
           components: rustfmt
           cache: false
+      - run: rustup update --no-self-update stable
       - run: cargo fmt --all -- --check
 
   clippy:
@@ -38,11 +43,14 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v6
+        with:
+          submodules: recursive
       - uses: actions-rust-lang/setup-rust-toolchain@v1
         with:
           toolchain: stable
           components: clippy
           cache: false
+      - run: rustup update --no-self-update stable
       - uses: Swatinem/rust-cache@v2
       - run: cargo clippy --all-targets --all-features --workspace -- -D warnings
 
@@ -55,10 +63,13 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v6
+        with:
+          submodules: recursive
       - uses: actions-rust-lang/setup-rust-toolchain@v1
         with:
           toolchain: stable
           cache: false
+      - run: rustup update --no-self-update stable
       - uses: Swatinem/rust-cache@v2
       - uses: taiki-e/install-action@v2
         with:
@@ -71,11 +82,15 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
+        with:
+          submodules: recursive
       - uses: EmbarkStudios/cargo-deny-action@v2
 
   machete:
     name: cargo-machete
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
+        with:
+          submodules: recursive
       - uses: bnjbvr/cargo-machete@main
