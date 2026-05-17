@@ -207,7 +207,7 @@ jobs:
           "$hash  $ARCHIVE" | Out-File -Encoding ASCII "$ARCHIVE.sha256"
 
       - name: Upload archive + sidecar
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: ${{ matrix.target }}
           path: |
