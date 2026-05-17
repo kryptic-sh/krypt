@@ -1412,42 +1412,25 @@ fn format_duration(d: Duration) -> String {
     format!("{hours}h {mins}m")
 }
 
-/// Format a [`SystemTime`] as `YYYY-MM-DD HH:MM:SS` (UTC).
-fn format_timestamp_utc(t: SystemTime) -> String {
-    let secs = t
+/// Format the current time as `YYYY-MM-DD HH:MM:SS` in the system local zone.
+///
+/// Shells out to `date(1)` to match the existing `.batlog` bash script byte-for-byte
+/// (same format, same timezone) so old and new rows in the same log file stay
+/// consistent. Falls back to a UTC ISO-8601 timestamp if `date` is unavailable.
+fn format_timestamp_local() -> String {
+    if let Ok(out) = std::process::Command::new("date")
+        .arg("+%Y-%m-%d %H:%M:%S")
+        .output()
+        && out.status.success()
+    {
+        return String::from_utf8_lossy(&out.stdout).trim().to_string();
+    }
+    // Fallback: epoch seconds as UTC ISO-8601. Lossy but never blocks logging.
+    let secs = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .unwrap_or(Duration::ZERO)
         .as_secs();
-
-    // Manual UTC decomposition — no chrono dependency.
-    let s = secs % 60;
-    let total_mins = secs / 60;
-    let m = total_mins % 60;
-    let total_hours = total_mins / 60;
-    let h = total_hours % 24;
-    let total_days = total_hours / 24;
-
-    // Days since 1970-01-01 → Gregorian date.
-    let (year, month, day) = days_to_date(total_days);
-
-    format!("{year:04}-{month:02}-{day:02} {h:02}:{m:02}:{s:02}")
-}
-
-/// Convert days since Unix epoch (1970-01-01) to a Gregorian `(year, month, day)`.
-fn days_to_date(days: u64) -> (u64, u64, u64) {
-    // Algorithm: shift epoch to 1 March 0000 for simpler leap-year handling.
-    // Reference: http://howardhinnant.github.io/date_algorithms.html
-    let days = days as i64 + 719_468; // shift to 1 Mar 0000
-    let era = if days >= 0 { days } else { days - 146_096 } / 146_097;
-    let doe = (days - era * 146_097) as u64; // day of era [0, 146096]
-    let yoe = (doe - doe / 1460 + doe / 36524 - doe / 146_096) / 365; // year of era [0, 399]
-    let y = yoe as i64 + era * 400;
-    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100); // day of year [0, 365]
-    let mp = (5 * doy + 2) / 153; // month [0, 11] (Mar=0..Feb=11)
-    let d = doy - (153 * mp + 2) / 5 + 1; // day [1, 31]
-    let m = if mp < 10 { mp + 3 } else { mp - 9 }; // month [1, 12]
-    let y = if m <= 2 { y + 1 } else { y };
-    (y as u64, m, d)
+    format!("epoch:{secs}")
 }
 
 fn cmd_battery(args: BatteryArgs) -> Result<ExitCode> {
@@ -1496,12 +1479,11 @@ fn cmd_battery_report(reader: &dyn BatteryReader) -> Result<ExitCode> {
 }
 
 fn cmd_battery_log(reader: &dyn BatteryReader, log_path: &Path) -> Result<ExitCode> {
-    let now = SystemTime::now();
-    let epoch = now
+    let epoch = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .unwrap_or(Duration::ZERO)
         .as_secs();
-    let date_str = format_timestamp_utc(now);
+    let date_str = format_timestamp_local();
 
     // Ensure the parent directory exists.
     if let Some(parent) = log_path.parent() {

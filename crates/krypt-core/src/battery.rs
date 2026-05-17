@@ -329,7 +329,12 @@ impl BatteryReader for MockBatteryReader {
             Err(BatteryError::NotFound) => Err(BatteryError::NotFound),
             Err(BatteryError::Unsupported(p)) => Err(BatteryError::Unsupported(p)),
             Err(BatteryError::Parse(s)) => Err(BatteryError::Parse(s.clone())),
-            Err(BatteryError::Io(e)) => Err(BatteryError::Parse(e.to_string())),
+            // io::Error isn't Clone; rebuild a fresh one preserving kind + message
+            // so the mock reports the same variant the caller configured.
+            Err(BatteryError::Io(e)) => Err(BatteryError::Io(std::io::Error::new(
+                e.kind(),
+                e.to_string(),
+            ))),
         }
     }
 }
