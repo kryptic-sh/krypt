@@ -136,9 +136,10 @@ enum Command {
     /// Reads the tool config to find the repo, fast-forward-pulls it via gix
     /// (HTTPS only — no SSH; see `krypt init --help`), then re-runs `link`.
     ///
-    /// The working tree must be clean before running this command — commit,
-    /// stash, or discard any changes first.  Auto-stash support is planned
-    /// once gix gains a stash API.
+    /// A dirty working tree is auto-stashed before the pull and restored
+    /// afterwards.  Pass `--no-stash` to revert to the old behaviour (error
+    /// out instead of stashing).  On auto-stash pop conflict, the merged
+    /// state is left on disk and `refs/stash` retains the original stash.
     Update(UpdateArgs),
 
     /// Import an existing file into the dotfiles repo.
