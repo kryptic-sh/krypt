@@ -19,15 +19,24 @@ allow = [
   "Unicode-DFS-2016",
   "Zlib",
   "CC0-1.0",
+  "CDLA-Permissive-2.0",
 ]
 confidence-threshold = 0.8
 
 [bans]
 multiple-versions = "warn"
-wildcards = "deny"
+# Relaxed from "deny" while krypt-core's gix-* deps come from the
+# mxaddict/gitoxide fork via git URL (no version field). Restore to
+# "deny" once upstream gitoxide PR #2603 merges and we switch back
+# to crates.io.
+wildcards = "warn"
 highlight = "all"
 
 [sources]
 unknown-registry = "deny"
 unknown-git = "deny"
 allow-registry = ["https://github.com/rust-lang/crates.io-index"]
+# Temporary: gix-stash plumbing lives on a personal fork until upstream
+# gitoxide PR #2603 lands. Remove this entry when krypt-core switches
+# its gix dep back to crates.io.
+allow-git = ["https://github.com/mxaddict/gitoxide"]
