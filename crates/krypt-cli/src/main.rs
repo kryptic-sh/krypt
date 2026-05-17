@@ -267,6 +267,14 @@ struct UpdateArgs {
     /// On link: overwrite real conflicts.
     #[arg(long)]
     force: bool,
+
+    /// Skip auto-stash and error immediately if the working tree is dirty.
+    ///
+    /// By default `krypt update` automatically stashes uncommitted changes
+    /// before the pull and restores them afterwards.  Pass this flag to revert
+    /// to the old behaviour: error out instead.
+    #[arg(long)]
+    no_stash: bool,
 }
 
 #[derive(clap::Args, Debug)]
@@ -782,12 +790,16 @@ fn cmd_update(args: UpdateArgs) -> Result<ExitCode> {
         dry_run: args.dry_run,
         skip_hooks: args.skip_hooks,
         force: args.force,
+        no_stash: args.no_stash,
     };
 
     match update(&opts) {
         Ok(report) => {
             if let Some(warn) = &report.version_warning {
                 eprintln!("{warn}");
+            }
+            if report.stashed {
+                println!("stash: auto-stashed (restored after pull)");
             }
             println!("pull:  {}", if report.pulled { "ok" } else { "up to date" });
             println!("link:");
