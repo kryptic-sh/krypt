@@ -1,14 +1,14 @@
 # krypt
 
-[![CI](https://github.com/kryptic-sh/krypt/actions/workflows/ci.yml/badge.svg)](https://github.com/kryptic-sh/krypt/actions/workflows/ci.yml)
-[![crates.io](https://img.shields.io/crates/v/krypt-cli.svg)](https://crates.io/crates/krypt-cli)
-[![docs.rs](https://img.shields.io/docsrs/krypt-core)](https://docs.rs/krypt-core)
-[![license: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
-
 Cross-platform dotfiles manager. Rust binary. Config-driven.
 
 A vault for your dotfiles — clone, deploy, and keep in sync across Linux, macOS,
 and Windows. Part of the [kryptic.sh](https://kryptic.sh) suite.
+
+[![CI](https://github.com/kryptic-sh/krypt/actions/workflows/ci.yml/badge.svg)](https://github.com/kryptic-sh/krypt/actions/workflows/ci.yml)
+[![crates.io](https://img.shields.io/crates/v/krypt-cli.svg)](https://crates.io/crates/krypt-cli)
+[![docs.rs](https://img.shields.io/docsrs/krypt-core)](https://docs.rs/krypt-core)
+[![license: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
 ## What it does
 
