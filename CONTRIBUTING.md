@@ -1,12 +1,13 @@
 # Contributing
 
-Thanks for taking a look. The project is in early development — read the
-phase milestones in [Issues](https://github.com/kryptic-sh/krypt/issues)
-to see where help fits.
+Thanks for taking a look. The project is in early development — read the phase
+milestones in [Issues](https://github.com/kryptic-sh/krypt/issues) to see where
+help fits.
 
 ## Commit style
 
-This repo follows **[Conventional Commits](https://www.conventionalcommits.org/)**.
+This repo follows
+**[Conventional Commits](https://www.conventionalcommits.org/)**.
 
 ```
 type(scope): short summary
@@ -26,8 +27,8 @@ Examples:
 - `docs: clarify XDG escape-hatch usage`
 - `ci: add windows runner to test matrix`
 
-Breaking changes: append `!` after type (`feat(core)!: ...`) and explain
-in the body.
+Breaking changes: append `!` after type (`feat(core)!: ...`) and explain in the
+body.
 
 ## Development
 
@@ -44,9 +45,9 @@ cargo clippy --all-targets -- -D warnings
 cargo test --all
 ```
 
-MSRV is **Rust 1.95** (matches `kryptic-sh/buffr`'s pin; bump in lockstep
-with the org). Workspace `edition = "2024"`. (`edition = "2021"` workspace, individual crates may
-adopt `edition = "2024"` later).
+MSRV is **Rust 1.95** (matches `kryptic-sh/buffr`'s pin; bump in lockstep with
+the org). Workspace `edition = "2024"`. (`edition = "2021"` workspace,
+individual crates may adopt `edition = "2024"` later).
 
 ## Repo layout
 
@@ -58,8 +59,8 @@ crates/
 └── krypt-platform/   # lib: cfg-gated OS abstractions
 ```
 
-When in doubt, put new code in `krypt-core` and re-export through the CLI.
-The CLI crate stays thin.
+When in doubt, put new code in `krypt-core` and re-export through the CLI. The
+CLI crate stays thin.
 
 ## Issues + PRs
 
@@ -73,9 +74,9 @@ The CLI crate stays thin.
 The release workflow publishes to three external destinations. Secrets are
 provisioned **at the kryptic.sh org level** and inherited by this repo:
 
-| Secret                 | Used by          | Visibility                          |
-| ---------------------- | ---------------- | ----------------------------------- |
-| `CARGO_REGISTRY_TOKEN` | `publish-crates` | org-wide                            |
+| Secret                 | Used by          | Visibility                            |
+| ---------------------- | ---------------- | ------------------------------------- |
+| `CARGO_REGISTRY_TOKEN` | `publish-crates` | org-wide                              |
 | `AUR_SSH_KEY`          | `aur-bin`        | selected repos (krypt is allowlisted) |
 | `BREW_SSH_KEY`         | `brew-tap`       | selected repos (krypt is allowlisted) |
 
@@ -86,11 +87,12 @@ The first tagged release will:
 
 1. Build all 6 target archives + sha256 sidecars
 2. Create a GitHub Release
-3. Publish all 4 workspace crates to crates.io (idempotent — skips already-published versions)
+3. Publish all 4 workspace crates to crates.io (idempotent — skips
+   already-published versions)
 4. Render PKGBUILD + push to `aur.archlinux.org/krypt-bin.git`
 5. Render Homebrew formula + push to `kryptic-sh/homebrew-tap@main`
 
-If any step fails, retry with `gh workflow run release.yml --ref v<version>`.
+If any step fails, retry with `gh workflow run ci.yml --ref v<version>`.
 
 ## License
 
