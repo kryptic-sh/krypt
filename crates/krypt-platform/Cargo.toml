@@ -11,4 +11,3 @@ homepage.workspace     = true
 readme.workspace       = true
 
 [dependencies]
-tracing = { workspace = true }

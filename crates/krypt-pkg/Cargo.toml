@@ -12,5 +12,4 @@ readme.workspace       = true
 
 [dependencies]
 thiserror  = { workspace = true }
-tracing    = { workspace = true }
 which      = { workspace = true }

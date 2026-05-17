@@ -29,12 +29,7 @@ gix = { git = "https://github.com/mxaddict/gitoxide", branch = "feat/gix-stash",
     "merge",
 ] }
 gix-actor         = { git = "https://github.com/mxaddict/gitoxide", branch = "feat/gix-stash" }
-gix-diff          = { git = "https://github.com/mxaddict/gitoxide", branch = "feat/gix-stash", default-features = false, features = ["blob"] }
-gix-filter        = { git = "https://github.com/mxaddict/gitoxide", branch = "feat/gix-stash" }
-gix-merge         = { git = "https://github.com/mxaddict/gitoxide", branch = "feat/gix-stash" }
-gix-worktree      = { git = "https://github.com/mxaddict/gitoxide", branch = "feat/gix-stash", default-features = false }
 gix-worktree-state = { git = "https://github.com/mxaddict/gitoxide", branch = "feat/gix-stash" }
 
 [dev-dependencies]
 tempfile  = { workspace = true }
-smallvec  = "1"
