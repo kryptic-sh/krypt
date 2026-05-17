@@ -8,7 +8,31 @@ patch bumps.
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-05-17
+
+Phase 2 wrap-up: the menu engine. Adds a step runner with predicate gating, a
+generic `krypt <group> <name>` dispatcher over `[[command]]` groups in
+`.krypt.toml`, cross-platform desktop notifications, post-update lifecycle hooks
+executed by `krypt update`, and the first absorbed utility command
+(`krypt battery`).
+
 ### Added
+
+- `krypt battery {report,log,clear}` subcommand — absorbs the `.batrep`,
+  `.batlog`, and `.batclear` bash scripts as a one-shot built-in. `report`
+  prints current percent, status, and (when discharging) estimated time to
+  empty. `log [--log-file <path>]` appends one CSV row to
+  `~/.local/log/bathist.log` (default) in the exact format of the bash `.batlog`
+  script (`YYYY-MM-DD HH:MM:SS, <epoch>, NN%, <Status>`) — local timezone via
+  `date(1)` for byte-for-byte continuity with existing logs.
+  `clear [--log-file <path>]` deletes the log file (missing-already is not an
+  error). New `krypt-core::battery` module: `BatteryReader` trait,
+  `BatteryReading`, `BatteryStatus`, `LinuxSysfsReader` (scans
+  `/sys/class/power_supply/` for the first `Battery`-typed entry; computes
+  `time_to_empty` from `energy_now`/`power_now` µWh÷µW, falling back to
+  `charge_now`/`current_now`), `UnsupportedReader` stub for macOS/Windows,
+  `MockBatteryReader` for tests. `default_reader()` picks the right
+  implementation per target. No new workspace deps (#28).
 
 - Generic `krypt <group> <name>` dispatcher. Any `[[command]]` group defined in
   `.krypt.toml` (e.g. `battery`, `kanata`, `tmux`) is now reachable without
