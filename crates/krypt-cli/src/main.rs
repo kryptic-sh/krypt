@@ -3,12 +3,16 @@
 //! This is the CLI entrypoint. Real logic lives in `krypt-core`. This crate
 //! is intentionally thin: clap wiring + delegation.
 
-use std::path::PathBuf;
+use std::fs;
+use std::io::Write as _;
+use std::path::{Path, PathBuf};
 use std::process::ExitCode;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use clap::{Parser, Subcommand, ValueEnum};
 use color_eyre::Result;
 use krypt_core::adopt::{AdoptEditsOpts, AdoptError, AdoptOpts, adopt, adopt_edits};
+use krypt_core::battery::{BatteryError, BatteryReader, default_reader};
 use krypt_core::deploy::{DeployOpts, LinkReport, UnlinkReport, link, relink, unlink};
 use krypt_core::dispatch::{DispatchError, DispatchOpts, list_in_group, run_in_group};
 use krypt_core::doctor::{DoctorOpts, doctor};
@@ -199,6 +203,19 @@ enum Command {
     /// step sequence. Positional arguments after `--` are forwarded to steps as
     /// `{0}`..`{9}`. Use `--dry-run` to print the step plan without executing.
     Menu(MenuArgs),
+
+    /// Report battery status, log readings to a CSV file, or clear the log.
+    ///
+    /// `krypt battery report` — prints current percentage, status, and
+    /// estimated time to empty (when discharging and sysfs data is available).
+    ///
+    /// `krypt battery log [--log-file <path>]` — appends one CSV row to the
+    /// log file (default: `~/.local/log/bathist.log`), creating the file and
+    /// its parent directories if needed. Compatible with the `.batlog` bash
+    /// script format.
+    ///
+    /// `krypt battery clear [--log-file <path>]` — deletes the log file.
+    Battery(BatteryArgs),
 
     /// Run a command from any `[[command]]` group in `.krypt.toml`.
     ///
@@ -428,6 +445,34 @@ struct MenuArgs {
     args: Vec<String>,
 }
 
+#[derive(clap::Args, Debug)]
+struct BatteryArgs {
+    #[command(subcommand)]
+    cmd: BatterySubcmd,
+}
+
+#[derive(clap::Subcommand, Debug)]
+enum BatterySubcmd {
+    /// Print current battery percentage, status, and time to empty.
+    Report,
+    /// Append a CSV row to the battery history log file.
+    Log {
+        /// Override the log file path.
+        ///
+        /// Defaults to `~/.local/log/bathist.log`.
+        #[arg(long)]
+        log_file: Option<PathBuf>,
+    },
+    /// Delete the battery history log file.
+    Clear {
+        /// Override the log file path.
+        ///
+        /// Defaults to `~/.local/log/bathist.log`.
+        #[arg(long)]
+        log_file: Option<PathBuf>,
+    },
+}
+
 fn main() -> Result<ExitCode> {
     color_eyre::install()?;
     tracing_subscriber::fmt()
@@ -460,6 +505,7 @@ fn main() -> Result<ExitCode> {
         Some(Command::Deps(args)) => cmd_deps(args),
         Some(Command::Notify(args)) => cmd_notify(args),
         Some(Command::Menu(args)) => cmd_menu(args),
+        Some(Command::Battery(args)) => cmd_battery(args),
         Some(Command::External(args)) => cmd_external(args),
     }
 }
@@ -1347,6 +1393,166 @@ fn cmd_external(args: Vec<String>) -> Result<ExitCode> {
             }
         },
     }
+}
+
+// ─── Battery helpers ──────────────────────────────────────────────────────────
+
+/// Default battery history log path: `~/.local/log/bathist.log`.
+fn default_battery_log_path() -> Result<PathBuf> {
+    let home = std::env::var("HOME")
+        .map_err(|_| color_eyre::eyre::eyre!("HOME environment variable not set"))?;
+    Ok(PathBuf::from(home).join(".local/log/bathist.log"))
+}
+
+/// Format a [`Duration`] as `Xh Ym` (e.g. `4h 12m` or `0h 45m`).
+fn format_duration(d: Duration) -> String {
+    let total_mins = d.as_secs() / 60;
+    let hours = total_mins / 60;
+    let mins = total_mins % 60;
+    format!("{hours}h {mins}m")
+}
+
+/// Format a [`SystemTime`] as `YYYY-MM-DD HH:MM:SS` (UTC).
+fn format_timestamp_utc(t: SystemTime) -> String {
+    let secs = t
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or(Duration::ZERO)
+        .as_secs();
+
+    // Manual UTC decomposition — no chrono dependency.
+    let s = secs % 60;
+    let total_mins = secs / 60;
+    let m = total_mins % 60;
+    let total_hours = total_mins / 60;
+    let h = total_hours % 24;
+    let total_days = total_hours / 24;
+
+    // Days since 1970-01-01 → Gregorian date.
+    let (year, month, day) = days_to_date(total_days);
+
+    format!("{year:04}-{month:02}-{day:02} {h:02}:{m:02}:{s:02}")
+}
+
+/// Convert days since Unix epoch (1970-01-01) to a Gregorian `(year, month, day)`.
+fn days_to_date(days: u64) -> (u64, u64, u64) {
+    // Algorithm: shift epoch to 1 March 0000 for simpler leap-year handling.
+    // Reference: http://howardhinnant.github.io/date_algorithms.html
+    let days = days as i64 + 719_468; // shift to 1 Mar 0000
+    let era = if days >= 0 { days } else { days - 146_096 } / 146_097;
+    let doe = (days - era * 146_097) as u64; // day of era [0, 146096]
+    let yoe = (doe - doe / 1460 + doe / 36524 - doe / 146_096) / 365; // year of era [0, 399]
+    let y = yoe as i64 + era * 400;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100); // day of year [0, 365]
+    let mp = (5 * doy + 2) / 153; // month [0, 11] (Mar=0..Feb=11)
+    let d = doy - (153 * mp + 2) / 5 + 1; // day [1, 31]
+    let m = if mp < 10 { mp + 3 } else { mp - 9 }; // month [1, 12]
+    let y = if m <= 2 { y + 1 } else { y };
+    (y as u64, m, d)
+}
+
+fn cmd_battery(args: BatteryArgs) -> Result<ExitCode> {
+    let reader = default_reader();
+    match args.cmd {
+        BatterySubcmd::Report => cmd_battery_report(reader.as_ref()),
+        BatterySubcmd::Log { log_file } => {
+            let path = match log_file {
+                Some(p) => p,
+                None => default_battery_log_path()?,
+            };
+            cmd_battery_log(reader.as_ref(), &path)
+        }
+        BatterySubcmd::Clear { log_file } => {
+            let path = match log_file {
+                Some(p) => p,
+                None => default_battery_log_path()?,
+            };
+            cmd_battery_clear(&path)
+        }
+    }
+}
+
+fn cmd_battery_report(reader: &dyn BatteryReader) -> Result<ExitCode> {
+    match reader.read() {
+        Ok(r) => {
+            println!("Battery: {}% ({})", r.percent, r.status);
+            if let Some(tte) = r.time_to_empty {
+                println!("Time to empty: {}", format_duration(tte));
+            }
+            Ok(ExitCode::SUCCESS)
+        }
+        Err(BatteryError::NotFound) => {
+            eprintln!("No battery detected.");
+            Ok(ExitCode::from(1))
+        }
+        Err(BatteryError::Unsupported(p)) => {
+            eprintln!("Battery reporting not supported on {p}.");
+            Ok(ExitCode::from(1))
+        }
+        Err(e) => {
+            eprintln!("error: {e}");
+            Ok(ExitCode::from(1))
+        }
+    }
+}
+
+fn cmd_battery_log(reader: &dyn BatteryReader, log_path: &Path) -> Result<ExitCode> {
+    let now = SystemTime::now();
+    let epoch = now
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or(Duration::ZERO)
+        .as_secs();
+    let date_str = format_timestamp_utc(now);
+
+    // Ensure the parent directory exists.
+    if let Some(parent) = log_path.parent() {
+        fs::create_dir_all(parent)
+            .map_err(|e| color_eyre::eyre::eyre!("creating log directory: {e}"))?;
+    }
+
+    let row = match reader.read() {
+        Ok(r) => {
+            // Format: YYYY-MM-DD HH:MM:SS, <epoch>, NN%, <Status>
+            format!(
+                "{date_str}, {epoch}, {}%, {}\n",
+                r.percent,
+                r.status.sysfs_str()
+            )
+        }
+        Err(e) => {
+            // Log the error to stderr for operator visibility, but write the
+            // error row and exit 0 — matching the bash .batlog script behaviour.
+            eprintln!("battery: {e}");
+            format!("{date_str}, {epoch}, Error reading battery capacity or device not found.\n")
+        }
+    };
+
+    let mut file = fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(log_path)
+        .map_err(|e| color_eyre::eyre::eyre!("opening log file: {e}"))?;
+
+    file.write_all(row.as_bytes())
+        .map_err(|e| color_eyre::eyre::eyre!("writing log file: {e}"))?;
+
+    Ok(ExitCode::SUCCESS)
+}
+
+fn cmd_battery_clear(log_path: &Path) -> Result<ExitCode> {
+    println!("Clearing battery history log file");
+    println!("{}", log_path.display());
+
+    match fs::remove_file(log_path) {
+        Ok(()) => {}
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            // Already absent — that's fine, match bash semantics.
+        }
+        Err(e) => {
+            return Err(color_eyre::eyre::eyre!("removing log file: {e}"));
+        }
+    }
+
+    Ok(ExitCode::SUCCESS)
 }
 
 fn cmd_notify(args: NotifyArgs) -> Result<ExitCode> {

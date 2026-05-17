@@ -934,3 +934,125 @@ fn test_external_group_dry_run() {
         "output should show the echo step: {stdout}"
     );
 }
+
+// ─── Battery tests ────────────────────────────────────────────────────────────
+
+/// `krypt battery clear --log-file <path>` — log file exists → deleted,
+/// stdout mentions path and "Clearing".
+#[test]
+fn test_battery_clear_existing_file() {
+    let env = Env::new();
+    env.create_xdg_dirs();
+
+    // Create a temporary log file with some dummy content.
+    let log_dir = env.path(".local/log");
+    fs::create_dir_all(&log_dir).expect("create log dir");
+    let log_file = log_dir.join("bathist.log");
+    fs::write(
+        &log_file,
+        b"2026-01-01 00:00:00, 1700000000, 80%, Discharging\n",
+    )
+    .expect("write log file");
+    assert!(log_file.exists(), "log file must exist before clear");
+
+    let output = cmd(&env)
+        .args([
+            "battery",
+            "clear",
+            "--log-file",
+            &log_file.to_string_lossy(),
+        ])
+        .output()
+        .expect("run battery clear");
+
+    assert!(
+        output.status.success(),
+        "battery clear should exit 0; stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let stdout = String::from_utf8_lossy(&output.stdout).into_owned();
+    assert!(
+        stdout.contains("Clearing"),
+        "stdout should mention 'Clearing': {stdout}"
+    );
+    assert!(
+        stdout.contains(&log_file.to_string_lossy().to_string()),
+        "stdout should print the log path: {stdout}"
+    );
+    assert!(!log_file.exists(), "log file should be deleted after clear");
+}
+
+/// `krypt battery clear --log-file <path>` — log file absent → exit 0, no error.
+#[test]
+fn test_battery_clear_missing_file() {
+    let env = Env::new();
+    env.create_xdg_dirs();
+
+    let log_file = env.path(".local/log/bathist.log");
+    // Deliberately do NOT create the file.
+    assert!(!log_file.exists(), "log file should not exist");
+
+    let output = cmd(&env)
+        .args([
+            "battery",
+            "clear",
+            "--log-file",
+            &log_file.to_string_lossy(),
+        ])
+        .output()
+        .expect("run battery clear");
+
+    assert!(
+        output.status.success(),
+        "battery clear on missing file should exit 0; stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let stdout = String::from_utf8_lossy(&output.stdout).into_owned();
+    assert!(
+        stdout.contains("Clearing"),
+        "stdout should mention 'Clearing' even for missing file: {stdout}"
+    );
+}
+
+/// `krypt battery log --log-file <path>` — appends a CSV row; file is created
+/// when absent.
+#[test]
+fn test_battery_log_creates_file() {
+    let env = Env::new();
+    env.create_xdg_dirs();
+
+    let log_dir = env.path(".local/log");
+    let log_file = log_dir.join("bathist.log");
+    assert!(!log_file.exists(), "log file should not pre-exist");
+
+    let output = cmd(&env)
+        .args(["battery", "log", "--log-file", &log_file.to_string_lossy()])
+        .output()
+        .expect("run battery log");
+
+    // Always exits 0 (bash script behaviour — errors are logged, not raised).
+    assert!(
+        output.status.success(),
+        "battery log should exit 0; stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    // The file must now exist (either a real reading or an error row).
+    assert!(
+        log_file.exists(),
+        "log file should be created by battery log"
+    );
+
+    let content = fs::read_to_string(&log_file).expect("read log file");
+    // At minimum the row must have a date-like prefix.
+    assert!(
+        content.contains('-'),
+        "log row should contain a date: {content}"
+    );
+    assert!(
+        content.contains(','),
+        "log row should be CSV (comma-separated): {content}"
+    );
+}

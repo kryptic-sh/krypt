@@ -46,11 +46,15 @@
 //! - [`dispatch`]    — generic `krypt <group> <name>` dispatcher: list and run
 //!   `[[command]]` entries from `.krypt.toml` for any group. Renamed from
 //!   `menu` in issue #45; `krypt menu` is now `dispatch::run_in_group("menu", …)`.
+//! - [`battery`]     — cross-platform battery state reader: `LinuxSysfsReader`
+//!   (Linux), `UnsupportedReader` (macOS/Windows stub). Used by
+//!   `krypt battery {report,log,clear}` (issue #28).
 
 #![forbid(unsafe_code)]
 #![warn(missing_docs)]
 
 pub mod adopt;
+pub mod battery;
 pub mod config;
 pub mod copy;
 pub mod deploy;
