@@ -20,12 +20,20 @@ glob       = { workspace = true }
 sha2       = { workspace = true }
 which      = { workspace = true }
 dialoguer  = { workspace = true }
-gix = { version = "0.83.0", features = [
+gix = { git = "https://github.com/mxaddict/gitoxide", branch = "feat/gix-stash", features = [
     "blocking-http-transport-reqwest-rust-tls",
     "worktree-mutation",
     "status",
     "revision",
+    "stash",
+    "merge",
 ] }
+gix-actor         = { git = "https://github.com/mxaddict/gitoxide", branch = "feat/gix-stash" }
+gix-diff          = { git = "https://github.com/mxaddict/gitoxide", branch = "feat/gix-stash", default-features = false, features = ["blob"] }
+gix-filter        = { git = "https://github.com/mxaddict/gitoxide", branch = "feat/gix-stash" }
+gix-merge         = { git = "https://github.com/mxaddict/gitoxide", branch = "feat/gix-stash" }
+gix-worktree      = { git = "https://github.com/mxaddict/gitoxide", branch = "feat/gix-stash", default-features = false }
+gix-worktree-state = { git = "https://github.com/mxaddict/gitoxide", branch = "feat/gix-stash" }
 
 [dev-dependencies]
 tempfile  = { workspace = true }
