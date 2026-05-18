@@ -8,6 +8,28 @@ patch bumps.
 
 ## [Unreleased]
 
+## [0.2.2] - 2026-05-18
+
+### Fixed
+
+- `krypt init` now creates the destination's parent directory before handing off
+  to `gix::prepare_clone`. Previously, running `krypt init <url>` on a fresh box
+  (where the default repo path `$XDG_CONFIG_HOME/krypt/repo` has no pre-existing
+  `krypt/` parent) failed with a cryptic `"Could not open data at <dest>"` error
+  from gix.
+
+### Changed
+
+- `publish-crates` CI job now only publishes `krypt-platform` + `krypt-pkg` to
+  crates.io; `krypt-core` + `krypt-cli` are skipped until upstream
+  [GitoxideLabs/gitoxide#2603] (gix-stash plumbing) merges and we can repoint
+  the gix dep back to crates.io. AUR / brew / scoop / GH Releases continue to
+  ship the full binary built from the fork. Tracking: #56.
+
+### Docs
+
+- Standardized README to the kryptic-sh org convention.
+
 ## [0.2.1] - 2026-05-18
 
 CI consolidation, env var interpolation, auto-stash via the upstream gix-stash
