@@ -8,13 +8,29 @@
 //! - exactly one of `run` / `pipe` / `notify` on each step
 //! - platform strings are one of `linux` / `macos` / `windows`
 //! - prompt field `requires` references a key that exists in the same section
+//!
+//! # `${VAR}` interpolation in step args
+//!
+//! After include expansion, [`resolve_step_vars`] walks every step `run`,
+//! `pipe`, `notify`, and `input` arg and eagerly resolves `${X}` tokens.
+//! Resolution order:
+//!
+//! 1. krypt-internal var (via [`crate::paths::Resolver`]) — e.g. `${HOME}`,
+//!    `${XDG_CONFIG}`.
+//! 2. Process env var (`std::env::var(X)`).
+//! 3. Neither → **config-load error** citing file + location + var name.
+//!
+//! `\${X}` produces a literal `${X}` after resolution (escape semantics).
+//! Runtime `{name}` / `{0}`..`{9}` / `{stdin}` placeholders are **not**
+//! touched — they are resolved at step-execution time by the runner.
 
 use std::path::{Path, PathBuf};
-use std::{fs, io};
+use std::{env, fs, io};
 
 use thiserror::Error;
 
 use super::schema::{Config, Link, PromptSection, Step};
+use crate::paths::Resolver;
 
 /// Errors that can come out of parsing or validating a `.krypt.toml`.
 #[derive(Debug, Error)]
@@ -50,6 +66,20 @@ pub enum ConfigError {
         location: String,
         /// Human-readable explanation.
         message: String,
+    },
+
+    /// A `${VAR}` in a step arg could not be resolved — not a krypt-internal
+    /// var and not set in the process environment.
+    ///
+    /// Format mirrors the compiler-style `file:location: unknown variable …`.
+    #[error("{path}: {location}: unknown variable `{var}` in step arg")]
+    UnknownStepVar {
+        /// File that contains the step.
+        path: PathBuf,
+        /// Location hint (e.g. `command[0].steps[1].run[2]`).
+        location: String,
+        /// The unresolved variable name (without `${}` decoration).
+        var: String,
     },
 }
 
@@ -250,6 +280,158 @@ fn validate_step(step: &Step, loc: &str, path: &Path) -> Result<(), ConfigError>
     }
 
     Ok(())
+}
+
+// ─── Step-arg `${VAR}` resolution ────────────────────────────────────────────
+
+/// Eagerly resolve all `${VAR}` tokens in every step arg of every command and
+/// hook in `cfg`.
+///
+/// Call this after include expansion when all steps are available.  `path` is
+/// used for error reporting.  The `resolver` provides krypt-internal vars
+/// (built-ins + `[paths]` overrides); raw process env is used as the fallback
+/// tier.
+///
+/// `{name}` / `{0}`..`{9}` / `{stdin}` placeholders are **not** touched —
+/// the runner resolves those at execution time.
+///
+/// # Errors
+///
+/// Returns [`ConfigError::UnknownStepVar`] on the first unresolvable
+/// `${VAR}` token encountered.
+pub fn resolve_step_vars(
+    mut cfg: Config,
+    path: &Path,
+    resolver: &Resolver,
+) -> Result<Config, ConfigError> {
+    // Commands
+    for (cidx, cmd) in cfg.commands.iter_mut().enumerate() {
+        let cmd_loc = format!("command[{cidx}] ({}/{})", cmd.group, cmd.name);
+        for (sidx, step) in cmd.steps.iter_mut().enumerate() {
+            let step_loc = format!("{cmd_loc}.steps[{sidx}]");
+            resolve_step_arg_list(step.run.as_mut(), &step_loc, "run", path, resolver)?;
+            resolve_step_arg_list(step.pipe.as_mut(), &step_loc, "pipe", path, resolver)?;
+            resolve_step_arg_list(step.notify.as_mut(), &step_loc, "notify", path, resolver)?;
+            if let Some(ref mut input) = step.input {
+                *input =
+                    interpolate_dollar_vars(input, resolver, path, &format!("{step_loc}.input"))?;
+            }
+        }
+    }
+
+    // Hooks
+    for (hidx, hook) in cfg.hooks.iter_mut().enumerate() {
+        let hook_loc = format!("hook[{hidx}]");
+        for (aidx, arg) in hook.run.iter_mut().enumerate() {
+            let loc = format!("{hook_loc}.run[{aidx}]");
+            *arg = interpolate_dollar_vars(arg, resolver, path, &loc)?;
+        }
+    }
+
+    Ok(cfg)
+}
+
+/// Resolve `${VAR}` in every string in `args`, updating them in place.
+fn resolve_step_arg_list(
+    args: Option<&mut Vec<String>>,
+    step_loc: &str,
+    field: &str,
+    path: &Path,
+    resolver: &Resolver,
+) -> Result<(), ConfigError> {
+    let Some(args) = args else { return Ok(()) };
+    for (aidx, arg) in args.iter_mut().enumerate() {
+        let loc = format!("{step_loc}.{field}[{aidx}]");
+        *arg = interpolate_dollar_vars(arg, resolver, path, &loc)?;
+    }
+    Ok(())
+}
+
+/// Resolve all `${VAR}` tokens in `template`.
+///
+/// Resolution order for each `${X}`:
+/// 1. krypt-internal var via `resolver.resolve_var(X)` (built-ins + overrides)
+/// 2. `std::env::var(X)` — raw env lookup
+/// 3. Neither → [`ConfigError::UnknownStepVar`]
+///
+/// Escape: `\${X}` produces a literal `${X}` in the output.
+///
+/// Unrelated `{name}` / `{0}..{9}` / `{stdin}` patterns are copied verbatim.
+fn interpolate_dollar_vars(
+    template: &str,
+    resolver: &Resolver,
+    path: &Path,
+    location: &str,
+) -> Result<String, ConfigError> {
+    let mut out = String::with_capacity(template.len());
+    let chars: Vec<char> = template.chars().collect();
+    let mut i = 0;
+
+    while i < chars.len() {
+        // Escape: `\${...}` → literal `${...}`
+        if chars[i] == '\\' && i + 1 < chars.len() && chars[i + 1] == '$' {
+            // Check if there is an opening brace after `\$`
+            if i + 2 < chars.len() && chars[i + 2] == '{' {
+                // Find the closing `}`
+                if let Some(close_offset) = chars[i + 3..].iter().position(|&c| c == '}') {
+                    // Emit literal `${...}` (without the backslash)
+                    let inner: String = chars[i + 3..i + 3 + close_offset].iter().collect();
+                    out.push_str("${");
+                    out.push_str(&inner);
+                    out.push('}');
+                    i += 4 + close_offset; // skip `\`, `$`, `{`, inner, `}`
+                    continue;
+                }
+            }
+            // Not a valid escape sequence — emit the backslash literally
+            out.push(chars[i]);
+            i += 1;
+            continue;
+        }
+
+        // `${...}` interpolation
+        if chars[i] == '$' && i + 1 < chars.len() && chars[i + 1] == '{' {
+            // Find the closing `}`
+            if let Some(close_offset) = chars[i + 2..].iter().position(|&c| c == '}') {
+                let var_name: String = chars[i + 2..i + 2 + close_offset].iter().collect();
+                i += 3 + close_offset; // skip `$`, `{`, var_name, `}`
+
+                if var_name.is_empty() {
+                    // `${}` → emit literally (malformed; leave as-is)
+                    out.push_str("${}");
+                    continue;
+                }
+
+                // Tier 1: krypt-internal var
+                if let Ok(val) = resolver.resolve_var(&var_name) {
+                    out.push_str(&val);
+                    continue;
+                }
+
+                // Tier 2: process env var
+                if let Ok(val) = env::var(&var_name) {
+                    out.push_str(&val);
+                    continue;
+                }
+
+                // Tier 3: error
+                return Err(ConfigError::UnknownStepVar {
+                    path: path.to_owned(),
+                    location: location.into(),
+                    var: var_name,
+                });
+            }
+            // No closing brace — emit `$` literally and continue
+            out.push(chars[i]);
+            i += 1;
+            continue;
+        }
+
+        out.push(chars[i]);
+        i += 1;
+    }
+
+    Ok(out)
 }
 
 #[cfg(test)]

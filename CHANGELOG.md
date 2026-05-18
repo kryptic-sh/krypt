@@ -8,6 +8,26 @@ patch bumps.
 
 ## [Unreleased]
 
+### Added
+
+- `${VAR}` interpolation in `[[command]]` and `[[hook]]` step args. After
+  include expansion, every `run`, `pipe`, `notify`, and `input` arg is scanned
+  for `${VAR}` tokens and resolved eagerly (at config-load time, before any step
+  runs). Resolution order: krypt-internal built-in var (e.g. `${HOME}`,
+  `${XDG_CONFIG}`, `${LOCAL_BIN}`) first; process env var second; unknown → hard
+  error citing file + location + var name. Escape: `\${VAR}` produces a literal
+  `${VAR}`. Runtime `{name}` / `{0}`..`{9}` / `{stdin}` placeholders are
+  unaffected. New public API: `krypt_core::config::resolve_step_vars` +
+  `ConfigError::UnknownStepVar` (closes #55).
+
+### Changed
+
+- **Breaking**: unknown `${VAR}` tokens in step args now produce a config-load
+  error instead of a `warn + pass-literal` log. Any TOML in the wild relying on
+  warn-and-pass-literal behaviour (i.e. a step arg containing a literally
+  unresolvable `${TYPO}`) will now fail at `krypt` startup rather than silently
+  passing garbage to the subprocess.
+
 ## [0.2.0] - 2026-05-17
 
 Phase 2 wrap-up: the menu engine. Adds a step runner with predicate gating, a

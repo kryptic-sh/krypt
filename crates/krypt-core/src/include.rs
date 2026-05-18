@@ -16,7 +16,8 @@ use std::{fs, io};
 
 use glob::glob;
 
-use crate::config::{Config, ConfigError, Meta, parse_str};
+use crate::config::{Config, ConfigError, Meta, parse_str, resolve_step_vars};
+use crate::paths::Resolver;
 
 /// Maximum include-nesting depth before we bail out.
 const DEFAULT_MAX_DEPTH: usize = 8;
@@ -75,6 +76,9 @@ pub enum IncludeError {
 /// This is the most convenient entry point: it reads, parses, validates, and
 /// merges everything, returning a single flat [`Config`] with `include`
 /// cleared.
+///
+/// After include expansion, all `${VAR}` tokens in step args are eagerly
+/// resolved: krypt-internal vars first, process env second, unknown → error.
 pub fn load_with_includes(path: impl AsRef<Path>) -> Result<Config, IncludeError> {
     let path = path.as_ref();
     let raw = read_file(path)?;
@@ -85,7 +89,10 @@ pub fn load_with_includes(path: impl AsRef<Path>) -> Result<Config, IncludeError
         .to_path_buf();
     let canon = canonicalize_for_cycle(path)?;
     let mut visited = vec![canon];
-    expand_includes_inner(cfg, &base_dir, &mut visited, 0)
+    let merged = expand_includes_inner(cfg, &base_dir, &mut visited, 0)?;
+    let resolver = Resolver::new();
+    let resolved = resolve_step_vars(merged, path, &resolver)?;
+    Ok(resolved)
 }
 
 /// Expand the `include` list in an already-parsed `cfg`, resolving patterns

@@ -7,16 +7,21 @@
 //!
 //! # Step interpolation note
 //!
-//! Steps use `{name}` for named captures and `{0}`..`{9}` for positional args
-//! forwarded via `krypt <group> <name> -- arg0 arg1 ...`. The `${VAR}` syntax
-//! (e.g. `${HOME}`) is **not** expanded inside step args — that is a
-//! `.krypt.toml`-level path-variable syntax resolved by [`crate::paths::Resolver`]
-//! at config-load time, not at step-execution time. If a step needs `$HOME`,
-//! use `run = ["sh", "-c", "echo $HOME"]` or capture it into a named variable
-//! first.
+//! Steps support two interpolation syntaxes:
 //!
-//! The resolver **is** used by predicate evaluation (`file_exists:${HOME}/.bashrc`
-//! etc.) because `predicate.rs` calls `Resolver::resolve` internally.
+//! - **`${VAR}`** — resolved eagerly at *config-load time* by
+//!   [`crate::config::resolve_step_vars`].  Resolution order: krypt-internal
+//!   var (e.g. `${HOME}`, `${XDG_CONFIG}`) → process env var → hard error
+//!   referencing the file + location + var name.  `\${VAR}` escapes to a
+//!   literal `${VAR}`.
+//!
+//! - **`{name}` / `{0}`..`{9}` / `{stdin}`** — resolved at *step-execution
+//!   time* by the runner (named captures, positional args forwarded via
+//!   `krypt <group> <name> -- arg0 arg1 ...`, and pipeline stdin).
+//!
+//! The `${VAR}` resolver is also used by predicate evaluation
+//! (`file_exists:${HOME}/.bashrc` etc.) because `predicate.rs` calls
+//! `Resolver::resolve` internally.
 
 #![allow(clippy::result_large_err)]
 
