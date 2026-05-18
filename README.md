@@ -2,13 +2,14 @@
 
 Cross-platform dotfiles manager. Rust binary. Config-driven.
 
-A vault for your dotfiles — clone, deploy, and keep in sync across Linux, macOS,
-and Windows. Part of the [kryptic.sh](https://kryptic.sh) suite.
-
 [![CI](https://github.com/kryptic-sh/krypt/actions/workflows/ci.yml/badge.svg)](https://github.com/kryptic-sh/krypt/actions/workflows/ci.yml)
+[![release](https://img.shields.io/github/v/release/kryptic-sh/krypt)](https://github.com/kryptic-sh/krypt/releases)
 [![crates.io](https://img.shields.io/crates/v/krypt-cli.svg)](https://crates.io/crates/krypt-cli)
 [![docs.rs](https://img.shields.io/docsrs/krypt-core)](https://docs.rs/krypt-core)
 [![license: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+
+A vault for your dotfiles — clone, deploy, and keep in sync across Linux, macOS,
+and Windows. Part of the [kryptic.sh](https://kryptic.sh) suite.
 
 ## What it does
 
@@ -23,6 +24,13 @@ and Windows. Part of the [kryptic.sh](https://kryptic.sh) suite.
   `file_exists:` predicates.
 - Generic `krypt <group> <name>` dispatcher — any `[[command]]` entry in
   `.krypt.toml` is reachable as a subcommand without binary changes.
+
+## Status
+
+- **v0.2.0** — Phase 2 wrap. Step runner + predicates + notify + post-update
+  hooks + generic dispatcher + built-in `krypt battery`. See
+  [CHANGELOG.md](CHANGELOG.md).
+- Roadmap & open work: [issues](https://github.com/kryptic-sh/krypt/issues).
 
 ## Install
 
@@ -41,7 +49,7 @@ Every channel installs a binary named `krypt` on your `$PATH`.
 > transfers (see [#37](https://github.com/kryptic-sh/krypt/issues/37)),
 > `cargo install krypt` will become the canonical install command.
 
-## Quickstart
+## Usage
 
 ```sh
 krypt init https://github.com/you/dotfiles   # clone repo to XDG path
@@ -87,12 +95,9 @@ Four-crate Cargo workspace:
 | `krypt-pkg`      | Package manager abstraction (pacman, apt, brew, scoop, winget, dnf)                                  |
 | `krypt-platform` | OS-specific abstractions (cfg-gated)                                                                 |
 
-## Status
+## Contributing
 
-- **v0.2.0** — Phase 2 wrap. Step runner + predicates + notify + post-update
-  hooks + generic dispatcher + built-in `krypt battery`. See
-  [CHANGELOG.md](CHANGELOG.md).
-- Roadmap & open work: [issues](https://github.com/kryptic-sh/krypt/issues).
+See [CONTRIBUTING.md](CONTRIBUTING.md) or open an issue / PR.
 
 ## License
 
