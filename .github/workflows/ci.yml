@@ -429,16 +429,16 @@ jobs:
 
       - name: Configure SSH for homebrew-tap
         env:
-          BREW_SSH_KEY: ${{ secrets.BREW_SSH_KEY }}
+          BUCKET_SSH_KEY: ${{ secrets.BUCKET_SSH_KEY }}
         run: |
           set -euo pipefail
           install -dm700 ~/.ssh
-          printf '%s\n' "$BREW_SSH_KEY" > ~/.ssh/brew
-          chmod 600 ~/.ssh/brew
+          printf '%s\n' "$BUCKET_SSH_KEY" > ~/.ssh/bucket
+          chmod 600 ~/.ssh/bucket
 
       - name: Push formula to homebrew-tap
         env:
-          GIT_SSH_COMMAND: "ssh -i ~/.ssh/brew -o IdentitiesOnly=yes -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=~/.ssh/known_hosts"
+          GIT_SSH_COMMAND: "ssh -i ~/.ssh/bucket -o IdentitiesOnly=yes -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=~/.ssh/known_hosts"
         run: |
           set -euo pipefail
           git config --global user.name  "krypt-ci"
@@ -494,16 +494,16 @@ jobs:
 
       - name: Configure SSH for scoop-bucket
         env:
-          SCOOP_SSH_KEY: ${{ secrets.SCOOP_SSH_KEY }}
+          BUCKET_SSH_KEY: ${{ secrets.BUCKET_SSH_KEY }}
         run: |
           set -euo pipefail
           install -dm700 ~/.ssh
-          printf '%s\n' "$SCOOP_SSH_KEY" > ~/.ssh/scoop
-          chmod 600 ~/.ssh/scoop
+          printf '%s\n' "$BUCKET_SSH_KEY" > ~/.ssh/bucket
+          chmod 600 ~/.ssh/bucket
 
       - name: Push manifest to scoop-bucket
         env:
-          GIT_SSH_COMMAND: "ssh -i ~/.ssh/scoop -o IdentitiesOnly=yes -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=~/.ssh/known_hosts"
+          GIT_SSH_COMMAND: "ssh -i ~/.ssh/bucket -o IdentitiesOnly=yes -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=~/.ssh/known_hosts"
         run: |
           set -euo pipefail
           git config --global user.name  "krypt-ci"
