@@ -625,7 +625,7 @@ fn cmd_setup(args: SetupArgs) -> Result<ExitCode> {
 }
 
 fn cmd_validate(path: PathBuf) -> Result<ExitCode> {
-    match krypt_core::config::parse_file(&path) {
+    match krypt_core::include::load_with_includes(&path) {
         Ok(_) => {
             println!("✓ {} parsed and validated successfully", path.display());
             Ok(ExitCode::SUCCESS)
