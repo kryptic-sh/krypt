@@ -299,8 +299,18 @@ jobs:
           # so `cargo install krypt-cli && krypt --version` just works.
           publish_or_skip krypt-platform
           publish_or_skip krypt-pkg
-          publish_or_skip krypt-core
-          publish_or_skip krypt-cli
+          # krypt-core + krypt-cli are blocked from crates.io until upstream
+          # GitoxideLabs/gitoxide#2603 (gix-stash plumbing) lands. Their gix
+          # dep currently points at the mxaddict/gitoxide fork and uses
+          # `stash` + `merge` features that don't exist on crates.io's gix
+          # at the pinned version, so `cargo publish` rejects the manifest.
+          # The binary remains distributable via AUR / brew / scoop / GH
+          # Releases (built from the fork in the build job above). Restore
+          # these two lines after the upstream PR merges and the gix dep
+          # is repointed to crates.io.
+          #
+          # publish_or_skip krypt-core
+          # publish_or_skip krypt-cli
 
   aur-bin:
     name: Publish krypt-bin to AUR
