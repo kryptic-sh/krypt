@@ -156,6 +156,15 @@ fn prepare_repo_path(path: &Path, force: bool) -> Result<(), InitError> {
             }
         }
     }
+    // gix::prepare_clone requires the parent directory of the dest to exist.
+    // With the default repo path (e.g. `$XDG_CONFIG_HOME/krypt/repo`) the
+    // parent (`$XDG_CONFIG_HOME/krypt/`) often does not exist on first run —
+    // gix surfaces that as a cryptic "Could not open data at <dest>" error.
+    if let Some(parent) = path.parent()
+        && !parent.as_os_str().is_empty()
+    {
+        fs::create_dir_all(parent)?;
+    }
     Ok(())
 }
 
