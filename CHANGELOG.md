@@ -8,6 +8,11 @@ patch bumps.
 
 ## [Unreleased]
 
+## [0.2.1] - 2026-05-18
+
+CI consolidation, env var interpolation, auto-stash via the upstream gix-stash
+fork, and Scoop bucket distribution.
+
 ### Added
 
 - `${VAR}` interpolation in `[[command]]` and `[[hook]]` step args. After
@@ -19,14 +24,69 @@ patch bumps.
   `${VAR}`. Runtime `{name}` / `{0}`..`{9}` / `{stdin}` placeholders are
   unaffected. New public API: `krypt_core::config::resolve_step_vars` +
   `ConfigError::UnknownStepVar` (closes #55).
+- Auto-stash in `krypt update`: when the dotfiles working tree has uncommitted
+  changes at pull time, krypt stashes them via `gix-stash`, pulls, and pops the
+  stash back on top. Opt-out with `--no-stash`. Conflicts surface as
+  `AutoStashConflict { stash_oid }` so the user can apply manually (closes #44).
+- Scoop bucket distribution: release tags now publish the krypt manifest to
+  `kryptic-sh/scoop-bucket`, alongside the existing AUR / brew / crates.io
+  channels.
+  `scoop bucket add kryptic https://github.com/kryptic-sh/scoop-bucket && scoop install krypt`
+  works on Windows.
+- `.github/ISSUE_TEMPLATE/design_proposal.md` issue template (closes #49).
+
+### Fixed
+
+- `krypt validate` now runs the full `load_with_includes` pipeline instead of
+  bare `parse_file`. Previously a config with a typo'd `${TYPO_VAR}` would pass
+  `krypt validate` (exit 0) and only error at first dispatch.
 
 ### Changed
 
 - **Breaking**: unknown `${VAR}` tokens in step args now produce a config-load
   error instead of a `warn + pass-literal` log. Any TOML in the wild relying on
-  warn-and-pass-literal behaviour (i.e. a step arg containing a literally
-  unresolvable `${TYPO}`) will now fail at `krypt` startup rather than silently
-  passing garbage to the subprocess.
+  warn-and-pass-literal behaviour will now fail at `krypt` startup rather than
+  silently passing garbage to the subprocess.
+- Switched `gix` dep to the `mxaddict/gitoxide` fork (branch `feat/gix-stash`)
+  to pick up the new `gix-stash` plumbing crate ahead of upstream
+  [GitoxideLabs/gitoxide#2603]. Will switch back to crates.io once the upstream
+  PR lands.
+- `cargo-deny` config: `wildcards = "warn"` (was `"deny"`) and
+  `unknown-git = "deny"` with an `allow-git` entry for the gitoxide fork —
+  temporary relaxations while the gix dep is sourced from a git URL. Also added
+  `CDLA-Permissive-2.0` (pulled in via `webpki-root-certs`) to the licenses
+  allow list.
+
+### CI / Build
+
+- Consolidated `release.yml` into `ci.yml` as tag-gated jobs (`build`,
+  `release`, `aur-bin`, `brew-tap`, `scoop-bucket`, `publish-crates`). `build`
+  is gated on `needs: [fmt, clippy, test, deny, machete]` so a broken tag cannot
+  publish (closes #53).
+- Tightened tag-gated jobs to require `startsWith(github.ref, 'refs/tags/v')`
+  unconditionally; previously a `workflow_dispatch` from `main` could attempt to
+  create a GH Release named after the branch.
+- Added a `machete` job using `bnjbvr/cargo-machete@main`; pruned 9 unused
+  workspace deps (`tracing` in four crates, `gix-diff`, `gix-filter`,
+  `gix-merge`, `gix-worktree`, `predicates`, `smallvec`) (closes #52).
+- Adopted `cargo nextest run` (via `taiki-e/install-action@v2`),
+  `actions-rust-lang/setup-rust-toolchain@v1`, and inline `cargo-deny`. The
+  weekly `cron.yml` was deleted (closes #48).
+- Workflow hygiene: concurrency group + `cancel-in-progress`, `tags: ['v*']`
+  push trigger, `workflow_dispatch`, `FORCE_JAVASCRIPT_ACTIONS_TO_NODE24` env,
+  `submodules: recursive` on every `actions/checkout@v6`, and
+  `rustup update --no-self-update stable` after toolchain setup (closes #47).
+- Dependabot bumps: `actions/upload-artifact` 4 → 7, `actions/download-artifact`
+  4 → 8, `softprops/action-gh-release` 2 → 3.
+
+### Docs
+
+- README header reordered: tagline + description now precede the badge row
+  (closes #50).
+- Added `docs/migrating-from-bash.md` migration guide.
+- Refreshed `krypt update --help` to mention the new auto-stash behaviour.
+
+[GitoxideLabs/gitoxide#2603]: https://github.com/GitoxideLabs/gitoxide/pull/2603
 
 ## [0.2.0] - 2026-05-17
 
