@@ -526,8 +526,18 @@ fn gix_ff_pull(repo_path: &Path, no_stash: bool) -> Result<(bool, bool), UpdateE
             return Err(UpdateError::DirtyWorkingTree);
         }
         // Auto-stash: capture current state and reset WT to HEAD.
-        stash_oid = Some(stash_push(&mut repo, repo_path)?);
-        stashed = true;
+        // `is_dirty()` can produce a false positive (stat-cache staleness).
+        // When that happens, gix::stash::push returns NoLocalChanges — treat
+        // it as a clean tree and skip the stash rather than erroring out.
+        match stash_push(&mut repo, repo_path) {
+            Ok(oid) => {
+                stash_oid = Some(oid);
+                stashed = true;
+            }
+            Err(UpdateError::StashPush(ref e))
+                if matches!(**e, gix::stash::PushError::NoLocalChanges) => {}
+            Err(e) => return Err(e),
+        }
     }
 
     // ── 2. Fetch from the default remote ────────────────────────────────────
