@@ -233,7 +233,8 @@ pub fn hash_file(path: &Path) -> io::Result<String> {
         hasher.update(&buf[..n]);
     }
     let digest = hasher.finalize();
-    Ok(format!("sha256:{:x}", digest))
+    let hex: String = digest.iter().map(|b| format!("{b:02x}")).collect();
+    Ok(format!("sha256:{hex}"))
 }
 
 // ─── Drift detection ────────────────────────────────────────────────────────
