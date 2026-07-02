@@ -283,7 +283,32 @@ jobs:
               return 0
             fi
             echo "::group::cargo publish -p $crate"
-            cargo publish -p "$crate" --locked --no-verify
+            # hjkl-style 429 retries: parse crates.io's "try again after"
+            # timestamp (11-min fallback), 3 attempts; other failures fail fast.
+            local attempt=0
+            while true; do
+              if cargo publish -p "$crate" --locked --no-verify 2>&1 | tee /tmp/publish_"$crate".log; then
+                break
+              fi
+              if grep -qiE "429|Too Many Requests" /tmp/publish_"$crate".log && [ $attempt -lt 3 ]; then
+                local wait_until wait_secs
+                wait_until=$(grep -oE 'try again after [^.]+' /tmp/publish_"$crate".log | sed 's/try again after //' || true)
+                if [ -n "$wait_until" ]; then
+                  wait_secs=$(( $(date -d "$wait_until" +%s) - $(date +%s) + 30 ))
+                  [ "$wait_secs" -lt 30 ] && wait_secs=30
+                  echo "::warning::rate limited publishing ${crate}, sleeping ${wait_secs}s until $wait_until"
+                else
+                  wait_secs=660
+                  echo "::warning::rate limited publishing ${crate}, sleeping ${wait_secs}s (11 min fallback)"
+                fi
+                sleep "$wait_secs"
+                attempt=$(( attempt + 1 ))
+              else
+                echo "::error::publish failed for ${crate}"
+                echo "::endgroup::"
+                return 1
+              fi
+            done
             echo "::endgroup::"
             # crates.io takes a few seconds to index — give downstream
             # publishes a chance to resolve the dep.
