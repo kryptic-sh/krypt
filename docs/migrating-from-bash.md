@@ -4,8 +4,16 @@ Practical guide for converting an existing stow-based, bash-scripted dotfiles
 repo to a `.krypt.toml` config.
 
 Canonical worked example:
-[mxaddict/dotfiles](https://github.com/mxaddict/dotfiles) — Arch + Hyprland
-setup, ~70 symlinks, ~30 `[[command]]` entries, ~10 post-update hooks.
+[mxaddict/dotfiles](https://github.com/mxaddict/dotfiles) — an Arch + Hyprland
+setup driven entirely from `.krypt.toml`.
+
+> **krypt copies, it does not symlink.** `krypt link` reads `[[link]]` and
+> `[[template]]` entries and writes a real copy of each source to its
+> destination, preserving mtime and (on Unix) file mode. A manifest at
+> `${XDG_STATE}/krypt/manifest.json` records a sha256 of every source and
+> destination, which is how `krypt diff` spots drift and how `krypt link`
+> decides an existing destination is safe to overwrite. The subcommand is called
+> `link` for stow muscle-memory; nothing in krypt creates a symlink.
 
 ## Why migrate
 
@@ -33,15 +41,15 @@ If your dotfiles look like this:
    trees.
 
 krypt's deal: the bash gets demoted to "the part where shell is the right tool".
-Everything else (clone, symlink, deps, prompts, hooks, dispatchable commands) is
-declared in TOML and run by a Rust binary.
+Everything else (clone, file deploy, deps, prompts, hooks, dispatchable
+commands) is declared in TOML and run by a Rust binary.
 
 ## Conceptual mapping
 
 | Bash / stow concept                                | krypt equivalent                                                                                 |
 | -------------------------------------------------- | ------------------------------------------------------------------------------------------------ |
-| `git clone <url> ~/.files`                         | `krypt init <url>`                                                                               |
-| `stow .`                                           | `krypt link` (or `[[link]]` entries)                                                             |
+| `git clone <url> ~/.files`                         | `krypt init <url>` (HTTPS remotes only)                                                          |
+| `stow .`                                           | `[[link]]` entries deployed by `krypt link` — copies, not symlinks                               |
 | `.update` orchestrator                             | `krypt update`                                                                                   |
 | Interactive setup wizard (custom bash)             | `[prompts.*]` blocks + `krypt setup`                                                             |
 | `pacman -S … && apt … && brew …` chains            | `[[deps]] group = "core" pacman = [...] apt = [...]`                                             |
@@ -63,8 +71,10 @@ no shellcheck, no syntax highlighting, escape-quote hell.
 ```sh
 paru -S krypt-bin                  # Arch
 brew install kryptic-sh/tap/krypt  # macOS
-cargo install krypt-cli            # any
 ```
+
+Windows and other channels — plus the caveat that crates.io currently trails
+this repo — are covered in [the README's install section](../README.md#install).
 
 Verify: `krypt --version`.
 
@@ -76,6 +86,9 @@ Minimum viable config:
 [meta]
 name        = "my dotfiles"
 description = "Arch + Hyprland workstation"
+# Optional: the oldest krypt you want this repo used with. Advisory only —
+# `krypt update` prints a warning when the running binary is older, and
+# nothing else consults it. Pick whatever version you actually tested on.
 krypt_min   = "0.2.0"
 
 [paths]
@@ -110,11 +123,17 @@ src = ".gitconfig"
 dst = "${HOME}/.gitconfig"
 ```
 
-Run `krypt link` to deploy. `krypt link --dry-run` to plan. `krypt unlink`
-reverses it.
+Run `krypt link` to deploy (copy). `krypt link --dry-run` to plan.
+`krypt unlink` deletes every destination the manifest records, keeping drifted
+ones unless you pass `--force`.
 
-For files that should be **seeded from a template once** (not symlinked — user
-edits them per-machine), use `[[template]]`:
+A destination that already exists and does **not** match the manifest is
+reported as a conflict and skipped — `krypt link` will not clobber a file it
+didn't write unless you pass `--force`. That is what makes hand-edited files
+survive a re-link, and it's why `[[template]]` entries behave like "seeded
+once": they deploy the same way as `[[link]]`, and the only extra thing
+`[[template]]` gives you is a `prompts` list wiring the destination to
+`krypt setup`:
 
 ```toml
 [[template]]
@@ -168,9 +187,15 @@ prompt       = "Your email"
 default_from = "git:user.email"
 ```
 
-`krypt setup` runs every prompts block; the `writer = "gitconfig"` directive
-makes krypt write the answers via `git config --global` instead of into a
-template file.
+`krypt setup` runs every prompts block (or just the ones named by
+`--prompts a,b`); the `writer = "gitconfig"` directive makes krypt write the
+answers via `git config` instead of into a template file. Other writers:
+`hypr_vars`, `env`, `generic_template`.
+
+`krypt setup` does **only** this. It does not install `[[deps]]` and it does not
+deploy anything — despite the name, it is not a first-run "do everything"
+command. The full first run is `krypt init` → `krypt deps` → `krypt setup` →
+`krypt link`.
 
 ### 6. Replace post-install reloads with `[[hook]]`
 
@@ -199,8 +224,12 @@ Predicates available in `if =`:
 - `env:VAR` — env var is set; `env:VAR=value` — set to exact value
 - `platform:linux|macos|windows`
 - `file_exists:/path` — `${VAR}` interpolation supported
-- `!negation` — bind tighter than `,` (AND)
-- comma-separated terms AND together
+- `!negation` — binds tighter than `,` (AND)
+- comma-separated terms AND together; an empty predicate is vacuously true
+
+There is no OR. `post-update` is also the only `when` value the binary acts on
+today — `krypt update` filters hooks with `h.when == "post-update"` and ignores
+every other phase.
 
 ### 7. Replace menu launchers with `[[command]]`
 
@@ -246,16 +275,20 @@ preview a step plan without spawning processes.
 ### 8. Generic dispatcher
 
 Any `[[command]] group = "X"` is reachable as `krypt X <name>` — no clap wiring
-needed. Groups in mxaddict/dotfiles: `menu`, `kanata`, `env`, `tmux`, `system`,
-`ollama`, `browser`.
+needed. Group names are yours to choose; anything from a one-off toolbox to a
+per-application namespace works:
 
 ```sh
-krypt system mirror     # refresh arch mirrorlist
-krypt env up            # upload .env.* to GCS bucket
-krypt kanata toggle     # toggle systemd unit
+krypt system mirror     # [[command]] group = "system", name = "mirror"
+krypt env up            # group = "env",    name = "up"
+krypt kanata toggle     # group = "kanata", name = "toggle"
 ```
 
-`krypt <group>` (no name) lists everything in the group.
+`krypt <group>` (no name) lists everything in the group. The one restriction: a
+group named after a built-in subcommand (`link`, `update`, `deps`, `doctor`,
+`battery`, …) never reaches the generic dispatcher, because clap matches the
+built-in first. `menu` is the deliberate exception — `krypt menu` is a built-in
+that dispatches the `menu` group.
 
 ## Patterns and gotchas
 
@@ -282,19 +315,34 @@ steps = [
 
 ### `${HOME}`, `${XDG_CONFIG}`, etc. resolution
 
-krypt resolves `${VAR}` against:
+In `[[link]]` / `[[template]]` destinations, krypt resolves `${VAR}` against its
+own variable table: `[paths]` overrides from `.krypt.toml` first, then built-ins
+(`HOME`, `XDG_CONFIG`, `XDG_DATA`, `XDG_STATE`, `XDG_CACHE`, `XDG_RUNTIME`,
+`LOCAL_BIN`, `DOCUMENTS`, plus `MAC_LIBRARY` on macOS and `WIN_LOCALAPPDATA` /
+`WIN_APPDATA` on Windows). Run `krypt paths` to print the whole table as
+resolved on the current host. An unknown name is a hard error
+(`unknown path variable ${NOPE}`), not a passthrough.
 
-1. `[paths]` overrides in `.krypt.toml`
-2. Standard XDG vars (`XDG_CONFIG`, `XDG_DATA`, etc.)
-3. `HOME`
+In `[[command]]` / `[[hook]]` **step arguments** (`run`, `pipe`, `notify`,
+`input`), `${VAR}` is expanded eagerly at config-load time with one extra tier:
 
-Variables krypt doesn't recognise are left literal — bash will see them as shell
-vars (which is usually what you want when passing them through `bash -c`).
+1. krypt's own variable (built-in or `[paths]` override)
+2. the process environment
+3. otherwise — a hard error naming the file, the step, and the variable
+
+So unrecognised variables are **not** left literal for the shell to expand
+later. Note also that steps are argv, not a command line: `run = [...]` spawns
+the binary directly with no shell, so `$FOO` (no braces) reaches the child
+process as four literal characters. If you want a variable expanded by bash, put
+it inside a real script file and call that. To pass a literal `${VAR}` through,
+escape it as `\${VAR}`.
 
 ### Predicates apply per-step, not per-command
 
 ```toml
-# Wrong — krypt errors with "unknown field `if` on [[command]]"
+# Wrong — krypt validate rejects this:
+#   unknown field `if`, expected one of `group`, `name`, `description`,
+#   `platform`, `steps`
 [[command]]
 group = "env"
 name  = "up"
@@ -315,9 +363,11 @@ steps = [
 
 krypt has no machine-specific config layer. Per-machine variation lives in:
 
-- Templates seeded once and edited by hand (e.g. `monitors.conf` per laptop)
+- Templates seeded once and edited by hand (e.g. `monitors.conf` per laptop) —
+  once you edit the deployed copy it stops matching the manifest, so subsequent
+  `krypt link` runs report it as a conflict and leave it alone
 - Predicates that detect the machine state (`command_exists:`, `env:`,
-  `file_exists:`)
+  `file_exists:`, `platform:`)
 
 If you need real conditional config branching, write it as predicates on hooks
 or commands — don't try to fork the toml.
@@ -335,6 +385,7 @@ absorbed wholesale into the krypt binary (the `[[command]]` entry goes too).
 - [`crates/krypt-core/src/config/schema.rs`](../crates/krypt-core/src/config/schema.rs)
   — every config field
 - `krypt validate` — fail-fast TOML check
+- `krypt paths` — every `${VAR}` as resolved on this host
 - `krypt doctor` — sanity check (deploy state, hook predicates, etc.)
 - `krypt <subcommand> --help` — flags + behaviour for every command
 

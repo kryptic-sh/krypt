@@ -6,13 +6,14 @@
 //! (post-update hooks #43, `krypt menu` #25, `krypt <group> <name>` #25)
 //! delegates here.
 //!
-//! # Predicate evaluator (stub)
+//! # Predicate evaluator
 //!
-//! The `eval_predicate` parameter is a stub for issue #24. All predicate
-//! strings currently evaluate to `true` (no-op). Issue #24 will implement
-//! the real grammar: `command_exists:foo`, `platform:linux`, `env:FOO=bar`,
-//! `!file_exists:/path`, and so on. Tests that need predicate gating supply
-//! their own closure.
+//! The `eval_predicate` parameter is injected by the caller. Production
+//! callers ([`crate::dispatch`], [`crate::update`]) pass
+//! [`crate::predicate::default_predicate_evaluator`], which implements the
+//! real grammar: `command_exists:foo`, `platform:linux`, `env:FOO=bar`,
+//! `!file_exists:/path`, and comma-separated ANDs. Tests supply their own
+//! closure.
 //!
 //! # on_fail semantics
 //!

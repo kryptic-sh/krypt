@@ -11,14 +11,14 @@
 //! 2. **Execute** — performs the planned copies atomically, preserving
 //!    the source's mtime + (on Unix) file mode.
 //!
-//! What's deferred:
+//! The planner is deliberately manifest-unaware: it classifies *any*
+//! pre-existing destination as a [`Action::Conflict`]. [`crate::deploy`]
+//! is the layer that narrows those — it compares each conflicting
+//! destination against the manifest's recorded hash and promotes it back
+//! to a [`Action::Copy`] when the file on disk is one krypt wrote.
 //!
-//! - **Manifest-aware idempotency** — the executor records hashes via
-//!   [`crate::manifest`] but the planner still classifies any existing
-//!   destination as a [`Action::Conflict`]. Issue #15 (`krypt link`)
-//!   will compare against the manifest to narrow safe re-deploys.
-//! - **Interactive prompts** for conflicts — issue #15 wires the CLI
-//!   on top.
+//! Still deferred: interactive prompting on an unresolvable conflict. The
+//! CLI's only escape hatch today is `--force`.
 
 use std::fs::{self, File};
 use std::path::{Path, PathBuf};
@@ -110,8 +110,8 @@ pub enum Action {
     },
 
     /// Destination already exists. The caller decides what to do —
-    /// issue #15 (`krypt link`) will consult [`crate::manifest`] to
-    /// narrow content-matches into safe re-deploys.
+    /// [`crate::deploy`] consults [`crate::manifest`] to narrow
+    /// content-matches into safe re-deploys.
     Conflict {
         /// Absolute source path.
         src: PathBuf,

@@ -66,9 +66,11 @@ pub struct Meta {
     #[serde(default)]
     pub description: String,
 
-    /// Minimum `krypt` binary version this repo expects. If the installed
-    /// `krypt` is older, the loader emits a warning (or errors on
-    /// `--strict`). Format: SemVer.
+    /// Minimum `krypt` binary version this repo expects. Advisory only:
+    /// `krypt update` prints a warning when the running binary is older,
+    /// and nothing else consults it. Format: `MAJOR.MINOR.PATCH`;
+    /// unparseable values fall back to a lexicographic compare rather than
+    /// failing.
     #[serde(default)]
     pub krypt_min: Option<String>,
 
@@ -79,8 +81,9 @@ pub struct Meta {
     pub notify_backend: Option<String>,
 }
 
-/// `[[link]]` entry — a file (or glob) to deploy from the repo to a path
-/// under `$HOME`.
+/// `[[link]]` entry — a file (or glob) copied from the repo to a resolved
+/// destination path. Despite the name, no symlink is created; see
+/// [`crate::copy`].
 #[derive(Debug, Deserialize, Serialize, Clone)]
 #[serde(deny_unknown_fields)]
 pub struct Link {
@@ -225,7 +228,9 @@ pub struct Hook {
     /// Hook name, useful in logs.
     pub name: String,
 
-    /// Phase: `post-update`, `post-link`, etc.
+    /// Phase this hook belongs to. Any string parses, but `post-update` is
+    /// the only value the binary acts on today — `krypt update` runs those
+    /// and ignores every other phase.
     pub when: String,
 
     /// Optional predicate gating execution. Same syntax as `[[command]]`
@@ -247,7 +252,8 @@ pub struct Hook {
 #[derive(Debug, Deserialize, Serialize, Clone)]
 #[serde(deny_unknown_fields)]
 pub struct Command {
-    /// Group bucket (e.g. `menu`, `battery`).
+    /// Group bucket (e.g. `menu`, `system`). Groups that collide with a
+    /// built-in subcommand name are shadowed by it and unreachable.
     pub group: String,
 
     /// Command name within the group.
