@@ -346,7 +346,7 @@ fn check_git_repo(repo_path: &Path) -> (CheckStatus<String>, Option<gix::Reposit
                 .ok()
                 .map(|c| {
                     let id = c.id;
-                    format!("HEAD {}", &id.to_hex_with_len(7))
+                    format!("HEAD {}", id.to_hex_with_len(7))
                 })
                 .unwrap_or_else(|| "HEAD <unknown>".into());
             (CheckStatus::Ok(head), Some(repo))
