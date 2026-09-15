@@ -214,14 +214,23 @@ impl ProcessExec for RealProcessExec {
 
         let mut handle = child.spawn()?;
 
-        if let Some(input) = stdin {
-            use io::Write as _;
-            let stdin_handle = handle.stdin.take().expect("stdin piped");
-            let mut writer = io::BufWriter::new(stdin_handle);
-            writer.write_all(input.as_bytes())?;
-        }
-
-        let output = handle.wait_with_output()?;
+        // Feed stdin from its own thread while `wait_with_output` drains
+        // stdout/stderr. Writing all of it first deadlocks as soon as the
+        // child fills its output pipe before it has consumed the input.
+        let output = std::thread::scope(|scope| {
+            let writer = stdin.map(|input| {
+                let mut pipe = handle.stdin.take().expect("stdin piped");
+                scope.spawn(move || {
+                    use io::Write as _;
+                    pipe.write_all(input.as_bytes())
+                })
+            });
+            let output = handle.wait_with_output()?;
+            if let Some(writer) = writer {
+                writer.join().expect("stdin writer thread panicked")?;
+            }
+            Ok::<_, io::Error>(output)
+        })?;
         Ok(ProcessResult {
             status: output.status.code().unwrap_or(-1),
             stdout: String::from_utf8_lossy(&output.stdout).into_owned(),
@@ -1271,6 +1280,55 @@ mod tests {
             report.final_captures.get("ran").map(String::as_str),
             Some("runs")
         );
+    }
+
+    // ── 16. RealProcessExec against real processes ───────────────────────────
+
+    /// A filter that copies stdin to stdout line by line on every OS.
+    fn echo_filter() -> (&'static str, Vec<String>) {
+        if cfg!(windows) {
+            ("findstr", vec!["^".to_owned()])
+        } else {
+            ("cat", Vec::new())
+        }
+    }
+
+    #[test]
+    fn real_exec_captures_stdout_and_status() {
+        let result = RealProcessExec
+            .exec("git", &["--version".to_owned()], None)
+            .expect("spawn git");
+        assert_eq!(result.status, 0, "stderr: {}", result.stderr);
+        assert!(
+            result.stdout.starts_with("git version"),
+            "stdout: {:?}",
+            result.stdout
+        );
+    }
+
+    #[test]
+    fn real_exec_pipes_input_larger_than_the_os_pipe_buffer() {
+        // A streaming filter writes output while its input is still arriving.
+        // If the parent writes all of stdin before reading stdout, both sides
+        // block once the pipe buffers fill.
+        let line = "krypt pipe payload line\n";
+        let input = line.repeat((1 << 20) / line.len());
+        let expected_lines = input.lines().count();
+
+        let (tx, rx) = std::sync::mpsc::channel();
+        let payload = input.clone();
+        std::thread::spawn(move || {
+            let (cmd, args) = echo_filter();
+            tx.send(RealProcessExec.exec(cmd, &args, Some(&payload)))
+                .expect("send result");
+        });
+
+        let result = rx
+            .recv_timeout(std::time::Duration::from_secs(60))
+            .expect("exec deadlocked on a large pipe input")
+            .expect("spawn filter");
+        assert_eq!(result.status, 0, "stderr: {}", result.stderr);
+        assert_eq!(result.stdout.lines().count(), expected_lines);
     }
 
     #[test]

@@ -35,6 +35,10 @@ patch bumps.
   already did. Previously they parsed only the top-level `.krypt.toml`, so
   `[[deps]]` groups kept in an included file were silently ignored and
   `krypt deps` installed nothing.
+- `pipe` steps no longer hang when the program writes output while its input is
+  still arriving (a streaming filter such as `cat` or `sed` fed more input than
+  the OS pipe buffer holds). The runner wrote all of stdin before reading any
+  output, so both sides blocked once the pipes filled.
 
 ## [0.2.2] - 2026-05-18
 
