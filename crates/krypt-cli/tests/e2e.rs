@@ -777,6 +777,85 @@ fn test_setup_yes() {
     );
 }
 
+/// `krypt setup` resolves `[[template]]` entries the way `krypt link` does:
+/// `src` under the repo (not the working directory), `[paths]` overrides in
+/// `dst`, and no questions for a section whose templates are all for other
+/// platforms.
+#[test]
+fn test_setup_resolves_templates_like_link() {
+    let env = Env::new();
+    init_bare(&env);
+
+    let rp = repo_path(&env);
+    let current = match std::env::consts::OS {
+        "macos" => "macos",
+        "windows" => "windows",
+        _ => "linux",
+    };
+    let foreign: Vec<String> = ["linux", "macos", "windows"]
+        .into_iter()
+        .filter(|p| *p != current)
+        .map(|p| format!("\"{p}\""))
+        .collect();
+
+    let krypt_toml = r#"
+[paths]
+OUT = "${HOME}/out"
+
+[[template]]
+src = "templates/app.template"
+dst = "${OUT}/app.conf"
+prompts = ["app"]
+
+[[template]]
+src = "templates/foreign.template"
+dst = "${OUT}/foreign.conf"
+prompts = ["foreign"]
+platform = [FOREIGN]
+
+[prompts.app]
+writer = "generic_template"
+fields = [{ key = "terminal", prompt = "Terminal", default = "alacritty" }]
+
+[prompts.foreign]
+writer = "generic_template"
+fields = [{ key = "required", prompt = "No default, so --yes fails if asked" }]
+"#
+    .replace("FOREIGN", &foreign.join(", "));
+    fs::write(rp.join(".krypt.toml"), krypt_toml).expect("write .krypt.toml");
+    fs::create_dir_all(rp.join("templates")).expect("create templates dir");
+    fs::write(rp.join("templates/app.template"), b"term = {{terminal}}\n")
+        .expect("write app template");
+    fs::write(rp.join("templates/foreign.template"), b"x = {{required}}\n")
+        .expect("write foreign template");
+
+    // Run from the sandbox home, not the repo, so a CWD-relative `src` fails.
+    let output = cmd(&env)
+        .current_dir(env.home.path())
+        .args([
+            "setup",
+            "--config",
+            &rp.join(".krypt.toml").to_string_lossy(),
+            "--yes",
+        ])
+        .output()
+        .expect("run setup --yes");
+
+    let stdout = String::from_utf8_lossy(&output.stdout).into_owned();
+    assert!(
+        output.status.success(),
+        "setup should exit 0; stdout: {stdout}; stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let app = fs::read_to_string(env.path("out/app.conf")).expect("read app.conf");
+    assert_eq!(app, "term = alacritty\n");
+    assert!(
+        stdout.contains(r#"skipping prompt section "foreign""#),
+        "the foreign section is reported as skipped: {stdout}"
+    );
+    assert!(!env.path("out/foreign.conf").exists());
+}
+
 /// `krypt menu` with no `[[command]] group = "menu"` entries → exit 0, output
 /// mentions "no menus".
 #[test]

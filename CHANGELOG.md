@@ -23,6 +23,14 @@ patch bumps.
 
 ### Fixed
 
+- `krypt setup` now resolves `[[template]]` entries the way `krypt link` does. A
+  template's `src` is read from the repo instead of the current directory, so a
+  `generic_template` section no longer fails with "No such file or directory"
+  when run outside the repo (including through the tool-config fallback).
+  `[paths]` overrides now apply to `dst`, a `dst` that fails to resolve is an
+  error rather than a literal `${VAR}` path, and a section whose templates are
+  all gated to other platforms is skipped instead of asking questions whose
+  answers would be written to a file `link` never deploys on this OS.
 - `krypt <group> <name>` now runs the `[[command]]` entry declared for the
   current platform when the same group and name are repeated, falling back to
   the entry without a `platform`. Previously dispatch took the first entry by

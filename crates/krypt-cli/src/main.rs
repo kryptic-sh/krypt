@@ -549,30 +549,41 @@ fn cmd_setup(args: SetupArgs) -> Result<ExitCode> {
     let cfg = krypt_core::include::load_with_includes(&config_path)
         .map_err(|e| color_eyre::eyre::eyre!("loading config: {e}"))?;
 
-    let sections = args.prompts.unwrap_or_default();
+    // Destinations come from the [[template]] entries naming each section,
+    // resolved as `krypt link` resolves them: sources under the repo, `[paths]`
+    // overrides applied, other platforms' templates left out.
+    let repo_root = config_path.parent().unwrap_or(Path::new("."));
+    let resolver = krypt_core::deploy::build_resolver(None, &cfg);
+    let targets = krypt_core::setup::template_targets(&cfg, repo_root, &resolver)
+        .map_err(|e| color_eyre::eyre::eyre!("resolving template destination: {e}"))?;
+
+    // Every section runs when none are named; sections whose templates are
+    // all for other platforms are dropped either way.
+    let requested = args
+        .prompts
+        .unwrap_or_else(|| cfg.prompts.keys().cloned().collect());
+    let (skipped_by_platform, sections): (Vec<String>, Vec<String>) = requested
+        .into_iter()
+        .partition(|name| targets.platform_skipped.contains(name));
+    for name in &skipped_by_platform {
+        println!("skipping prompt section {name:?}: its templates are for other platforms");
+    }
+    if sections.is_empty() {
+        println!("nothing to set up on {}", resolver.platform());
+        return Ok(ExitCode::SUCCESS);
+    }
 
     let opts = SetupOpts {
-        sections: sections.clone(),
+        sections,
         yes: args.yes,
         prompt_sections: cfg.prompts.clone(),
     };
 
-    // Build per-section destination and source paths from [[template]] entries.
-    // A template's `prompts` list names the sections that write to its `dst`.
-    let mut dsts = std::collections::BTreeMap::new();
-    let mut srcs = std::collections::BTreeMap::new();
-    let resolver = Resolver::new();
-    for tmpl in &cfg.templates {
-        for section_name in &tmpl.prompts {
-            let dst_str = resolver
-                .resolve(&tmpl.dst)
-                .unwrap_or_else(|_| tmpl.dst.clone());
-            if !args.dry_run {
-                dsts.insert(section_name.clone(), PathBuf::from(dst_str));
-                srcs.insert(section_name.clone(), PathBuf::from(&tmpl.src));
-            }
-        }
-    }
+    let (dsts, srcs) = if args.dry_run {
+        Default::default()
+    } else {
+        (targets.dsts, targets.srcs)
+    };
 
     let result = if args.yes {
         let mut p = YesPrompter;

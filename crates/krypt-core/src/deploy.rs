@@ -296,7 +296,9 @@ fn load_config(config_path: &Path) -> Result<(Config, PathBuf), DeployError> {
     Ok((cfg, repo_root))
 }
 
-fn build_resolver(platform: Option<Platform>, cfg: &Config) -> Resolver {
+/// The resolver `link` uses: the host platform unless `platform` overrides
+/// it, with the config's `[paths]` overrides applied.
+pub fn build_resolver(platform: Option<Platform>, cfg: &Config) -> Resolver {
     let r = match platform {
         Some(p) => Resolver::for_platform(p),
         None => Resolver::new(),

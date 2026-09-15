@@ -26,14 +26,15 @@
 
 #![allow(clippy::result_large_err)]
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
 
 use thiserror::Error;
 
-use crate::config::{PromptField, PromptSection};
+use crate::config::{Config, PromptField, PromptSection};
+use crate::paths::Resolver;
 
 // ─── Errors ──────────────────────────────────────────────────────────────────
 
@@ -628,6 +629,56 @@ fn run_section(
 
 // ─── Entry point ──────────────────────────────────────────────────────────────
 
+// ─── Template targets ────────────────────────────────────────────────────────
+
+/// Where each prompt section's answers go, taken from the `[[template]]`
+/// entries that name the section in their `prompts` list.
+#[derive(Debug, Default)]
+pub struct TemplateTargets {
+    /// Section name → resolved destination path.
+    pub dsts: BTreeMap<String, PathBuf>,
+    /// Section name → template source path, under the repo root.
+    pub srcs: BTreeMap<String, PathBuf>,
+    /// Sections named only by templates gated to other platforms. `krypt
+    /// link` never deploys those templates here, so their questions have
+    /// nowhere to go.
+    pub platform_skipped: BTreeSet<String>,
+}
+
+/// Resolve the setup destinations the same way `krypt link` plans templates:
+/// `src` is joined under `repo_root`, `dst` is expanded by `resolver` (which
+/// should carry the config's `[paths]` overrides), and templates whose
+/// `platform` does not include the resolver's platform are left out.
+pub fn template_targets(
+    cfg: &Config,
+    repo_root: &Path,
+    resolver: &Resolver,
+) -> Result<TemplateTargets, crate::paths::ResolveError> {
+    let current = resolver.platform().as_str();
+    let mut targets = TemplateTargets::default();
+    let mut foreign = BTreeSet::new();
+
+    for tmpl in &cfg.templates {
+        if tmpl.platform.as_ref().is_some_and(|p| !p.contains(current)) {
+            foreign.extend(tmpl.prompts.iter().cloned());
+            continue;
+        }
+        let dst = PathBuf::from(resolver.resolve(&tmpl.dst)?);
+        for section in &tmpl.prompts {
+            targets.dsts.insert(section.clone(), dst.clone());
+            targets
+                .srcs
+                .insert(section.clone(), repo_root.join(&tmpl.src));
+        }
+    }
+
+    targets.platform_skipped = foreign
+        .into_iter()
+        .filter(|section| !targets.dsts.contains_key(section))
+        .collect();
+    Ok(targets)
+}
+
 /// Run the interactive setup wizard.
 ///
 /// `git` is injected so tests can avoid shelling out to a real `git` binary.
@@ -790,6 +841,53 @@ mod tests {
     use super::*;
     use crate::config::{PromptField, PromptSection};
     use tempfile::tempdir;
+
+    #[test]
+    fn template_targets_follow_repo_root_paths_and_platform() {
+        use crate::paths::Platform;
+
+        let cfg = crate::config::parse_str(
+            r#"
+[paths]
+CONF = "/conf"
+
+[[template]]
+src = "git.template"
+dst = "${CONF}/git"
+prompts = ["git"]
+
+[[template]]
+src = "hypr.template"
+dst = "${CONF}/hypr"
+prompts = ["hypr", "shared"]
+platform = "linux"
+
+[[template]]
+src = "shared.template"
+dst = "${CONF}/shared"
+prompts = ["shared"]
+platform = ["macos", "windows"]
+"#,
+            "test.toml",
+        )
+        .unwrap();
+        let repo = Path::new("/repo");
+        let overrides: BTreeMap<String, String> = cfg.paths.clone().into_iter().collect();
+
+        let mac = Resolver::for_platform(Platform::Macos).with_overrides(overrides.clone());
+        let t = template_targets(&cfg, repo, &mac).unwrap();
+        assert_eq!(t.srcs["git"], repo.join("git.template"));
+        assert_eq!(t.dsts["git"], PathBuf::from("/conf/git"));
+        assert_eq!(t.dsts["shared"], PathBuf::from("/conf/shared"));
+        assert!(!t.dsts.contains_key("hypr"));
+        assert_eq!(t.platform_skipped, BTreeSet::from(["hypr".to_owned()]));
+
+        let linux = Resolver::for_platform(Platform::Linux).with_overrides(overrides);
+        let t = template_targets(&cfg, repo, &linux).unwrap();
+        assert_eq!(t.srcs["hypr"], repo.join("hypr.template"));
+        assert_eq!(t.srcs["shared"], repo.join("hypr.template"));
+        assert!(t.platform_skipped.is_empty());
+    }
 
     fn make_field(key: &str, prompt: &str) -> PromptField {
         PromptField {
