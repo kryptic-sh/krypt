@@ -51,6 +51,15 @@ patch bumps.
   every other `${HOME}` path. They read `$HOME` directly and failed with "HOME
   environment variable not set" in a normal Windows shell.
 
+### CI / Build
+
+- The `build` job now runs on every push, pull request and dispatch instead of
+  only on tags. The test matrix runs on latest stable, so this is the only job
+  that compiles the `rust-toolchain.toml` toolchain and the musl, aarch64-linux
+  and Intel macOS targets; a break there previously first appeared as skipped
+  publish jobs on a release tag. `release` and the publish jobs stay tag-gated.
+  Archive names replace `/` in branch refs such as `74/merge`.
+
 ## [0.2.2] - 2026-05-18
 
 ### Fixed
