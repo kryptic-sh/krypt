@@ -21,6 +21,10 @@ patch bumps.
 - `krypt deps` with winget no longer reports a failure when `winget install`
   exits with `APPINSTALLER_CLI_ERROR_UPDATE_NOT_APPLICABLE` (`0x8A15002B`),
   which winget returns for a package that is already installed and current.
+- The release binary now builds against `h2` 0.4.19 and `rustls` 0.23.45,
+  which fix RUSTSEC-2026-0258 (unbounded empty DATA frames) and
+  RUSTSEC-2026-0285 (TLS 1.3 handshake messages accepted across encryption
+  levels) in the HTTPS transport `krypt init` / `krypt update` use.
 
 ## [0.2.2] - 2026-05-18
 
