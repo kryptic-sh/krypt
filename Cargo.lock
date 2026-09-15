@@ -2216,6 +2216,7 @@ dependencies = [
  "gix-actor",
  "gix-worktree-state",
  "glob",
+ "krypt-platform",
  "serde",
  "serde_json",
  "sha2",
@@ -2230,6 +2231,7 @@ dependencies = [
 name = "krypt-pkg"
 version = "0.2.2"
 dependencies = [
+ "krypt-platform",
  "thiserror",
  "which",
 ]
@@ -2237,6 +2239,10 @@ dependencies = [
 [[package]]
 name = "krypt-platform"
 version = "0.2.2"
+dependencies = [
+ "tempfile",
+ "which",
+]
 
 [[package]]
 name = "kstring"

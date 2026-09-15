@@ -43,7 +43,6 @@
 use std::cell::RefCell;
 use std::collections::{BTreeMap, VecDeque};
 use std::io;
-use std::process::Command as StdCommand;
 use std::process::Stdio;
 
 use thiserror::Error;
@@ -188,7 +187,8 @@ pub struct RunReport {
 
 // ─── Real implementations ────────────────────────────────────────────────────
 
-/// Production process executor using [`std::process::Command`].
+/// Production process executor using [`std::process::Command`], built by
+/// [`krypt_platform::process::command`] so Windows `.cmd` / `.bat` shims spawn.
 ///
 /// No shell wrapping is applied. `run = ["echo", "hi"]` must reference a real
 /// binary in `PATH`. Shell builtins (e.g. `echo` on Windows outside Git Bash)
@@ -202,7 +202,7 @@ impl ProcessExec for RealProcessExec {
         args: &[String],
         stdin: Option<&str>,
     ) -> Result<ProcessResult, io::Error> {
-        let mut child = StdCommand::new(cmd);
+        let mut child = krypt_platform::process::command(cmd);
         child.args(args);
         child.stdout(Stdio::piped());
         child.stderr(Stdio::piped());

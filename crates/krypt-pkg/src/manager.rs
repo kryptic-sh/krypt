@@ -1,7 +1,6 @@
 //! Core `PackageManager` and `Runner` traits plus production/test impls.
 
 use std::collections::HashMap;
-use std::process::Command;
 use std::sync::Mutex;
 
 use thiserror::Error;
@@ -53,7 +52,9 @@ pub trait Runner: Send + Sync {
 
 // ─── RealRunner ───────────────────────────────────────────────────────────────
 
-/// Production runner — spawns a child process via [`Command`].
+/// Production runner — spawns a child process via
+/// [`krypt_platform::process::command`], so Windows `.cmd` / `.bat` shims
+/// such as `scoop` spawn.
 ///
 /// stdout and stderr are captured (not inherited) and returned in
 /// [`RunOutcome`] so callers can include them in reports.
@@ -61,7 +62,7 @@ pub struct RealRunner;
 
 impl Runner for RealRunner {
     fn run(&self, cmd: &str, args: &[&str]) -> Result<RunOutcome, std::io::Error> {
-        let out = Command::new(cmd).args(args).output()?;
+        let out = krypt_platform::process::command(cmd).args(args).output()?;
         Ok(RunOutcome {
             status: out.status.code().unwrap_or(-1),
             stdout: String::from_utf8_lossy(&out.stdout).into_owned(),

@@ -31,5 +31,7 @@ gix = { git = "https://github.com/mxaddict/gitoxide", branch = "feat/gix-stash",
 gix-actor         = { git = "https://github.com/mxaddict/gitoxide", branch = "feat/gix-stash" }
 gix-worktree-state = { git = "https://github.com/mxaddict/gitoxide", branch = "feat/gix-stash" }
 
+krypt-platform = { workspace = true }
+
 [dev-dependencies]
 tempfile  = { workspace = true }

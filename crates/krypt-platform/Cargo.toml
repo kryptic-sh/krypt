@@ -11,3 +11,7 @@ homepage.workspace     = true
 readme.workspace       = true
 
 [dependencies]
+which = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }

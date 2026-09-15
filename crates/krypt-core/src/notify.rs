@@ -29,7 +29,7 @@
 //! environment variables to avoid PowerShell single-quote escaping entirely.
 
 use std::io;
-use std::process::{Command, Stdio};
+use std::process::Stdio;
 
 use thiserror::Error;
 
@@ -222,7 +222,7 @@ pub fn notify(backend: NotifyBackend, title: &str, body: &str) -> Result<(), Not
 
     let (program, mut args) = command_for(backend, title, body);
 
-    let mut cmd = Command::new(&program);
+    let mut cmd = krypt_platform::process::command(&program);
     cmd.args(&args);
     cmd.stdout(Stdio::null());
     cmd.stderr(Stdio::piped());

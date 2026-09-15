@@ -39,6 +39,13 @@ patch bumps.
   still arriving (a streaming filter such as `cat` or `sed` fed more input than
   the OS pipe buffer holds). The runner wrote all of stdin before reading any
   output, so both sides blocked once the pipes filled.
+- On Windows, `[[command]]` / `[[hook]]` steps, `krypt deps` and `krypt notify`
+  can now run programs installed as `.cmd` / `.bat` shims, such as `scoop` and
+  npm global tools. `command_exists:` already found them through `PATHEXT`, but
+  spawning looked only for `<name>.exe` and failed with "program not found" — so
+  `krypt deps` failed on any machine with scoop installed, since scoop is the
+  preferred Windows manager. Programs are now resolved with the same lookup
+  (`krypt_platform::process::command`).
 
 ## [0.2.2] - 2026-05-18
 

@@ -13,3 +13,5 @@ readme.workspace       = true
 [dependencies]
 thiserror  = { workspace = true }
 which      = { workspace = true }
+
+krypt-platform = { workspace = true }

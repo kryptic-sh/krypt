@@ -30,7 +30,6 @@ use std::collections::BTreeMap;
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
-use std::process::Command as StdCommand;
 
 use thiserror::Error;
 
@@ -274,7 +273,7 @@ pub struct RealGitConfig;
 
 impl GitConfig for RealGitConfig {
     fn get(&self, key: &str) -> Option<String> {
-        let output = StdCommand::new("git")
+        let output = krypt_platform::process::command("git")
             .args(["config", "--get", key])
             .output()
             .ok()?;

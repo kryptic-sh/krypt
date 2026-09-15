@@ -72,6 +72,13 @@ fn cmd(env: &Env) -> Command {
     if let Ok(v) = std::env::var("APPDATA") {
         c.env("APPDATA", v);
     }
+    // Windows resolves programs on PATH through PATHEXT (`.cmd`, `.bat`, ...),
+    // and child processes there expect SystemRoot.
+    for key in ["PATHEXT", "SystemRoot"] {
+        if let Some(v) = std::env::var_os(key) {
+            c.env(key, v);
+        }
+    }
     c
 }
 
@@ -971,6 +978,86 @@ fn test_external_group_dry_run() {
     assert!(
         stdout.contains("echo"),
         "output should show the echo step: {stdout}"
+    );
+}
+
+/// Write a script named `name` into `dir` that writes `ok` to the file given
+/// as its first argument: a `.cmd` shim on Windows (how npm global tools and
+/// scoop install themselves), an executable `sh` script elsewhere.
+fn write_marker_shim(dir: &Path, name: &str) {
+    #[cfg(windows)]
+    fs::write(
+        dir.join(format!("{name}.cmd")),
+        "@echo off\r\necho ok> \"%~1\"\r\n",
+    )
+    .expect("write cmd shim");
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let script = dir.join(name);
+        fs::write(&script, "#!/bin/sh\necho ok > \"$1\"\n").expect("write sh shim");
+        fs::set_permissions(&script, fs::Permissions::from_mode(0o755)).expect("chmod shim");
+    }
+}
+
+/// `krypt my-group my-cmd` runs a step whose program is a script shim found
+/// on `PATH`. `command_exists:` finds such shims, so the step must be able to
+/// spawn them too.
+#[test]
+fn test_external_group_runs_script_shim_from_path() {
+    let env = Env::new();
+    init_bare(&env);
+
+    let shim_dir = env.path("shims");
+    fs::create_dir_all(&shim_dir).expect("create shim dir");
+    write_marker_shim(&shim_dir, "krypt-e2e-shim");
+    let marker = env.path("marker.txt");
+
+    let rp = repo_path(&env);
+    let krypt_toml = format!(
+        concat!(
+            "[[command]]\n",
+            "group = \"my-group\"\n",
+            "name = \"my-cmd\"\n",
+            "steps = [\n",
+            "  {{ if = \"command_exists:krypt-e2e-shim\", run = [\"krypt-e2e-shim\", \"{}\"] }},\n",
+            "]\n",
+        ),
+        toml_path(&marker)
+    );
+    let config_path = rp.join(".krypt.toml");
+    fs::write(&config_path, krypt_toml).expect("write .krypt.toml");
+
+    let mut paths = vec![shim_dir];
+    paths.extend(std::env::split_paths(
+        &std::env::var_os("PATH").unwrap_or_default(),
+    ));
+    let output = cmd(&env)
+        .env("PATH", std::env::join_paths(paths).expect("join PATH"))
+        .args([
+            "my-group",
+            "my-cmd",
+            "--config",
+            &config_path.to_string_lossy(),
+        ])
+        .output()
+        .expect("run my-group my-cmd");
+
+    assert!(
+        output.status.success(),
+        "krypt my-group my-cmd should exit 0; stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout).into_owned();
+    assert!(
+        stdout.contains("1 steps (0 skipped"),
+        "the shim step should run, not be skipped: {stdout}"
+    );
+    assert_eq!(
+        fs::read_to_string(&marker)
+            .expect("shim should write the marker")
+            .trim(),
+        "ok"
     );
 }
 

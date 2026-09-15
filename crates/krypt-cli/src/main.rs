@@ -1431,7 +1431,7 @@ fn format_duration(d: Duration) -> String {
 /// (same format, same timezone) so old and new rows in the same log file stay
 /// consistent. Falls back to a UTC ISO-8601 timestamp if `date` is unavailable.
 fn format_timestamp_local() -> String {
-    if let Ok(out) = std::process::Command::new("date")
+    if let Ok(out) = krypt_platform::process::command("date")
         .arg("+%Y-%m-%d %H:%M:%S")
         .output()
         && out.status.success()
