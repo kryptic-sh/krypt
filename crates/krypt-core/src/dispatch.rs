@@ -176,8 +176,9 @@ pub fn list_groups(opts: &DispatchOpts) -> Result<Vec<String>, DispatchError> {
 /// Return all commands defined in the given group.
 ///
 /// When `show_all` is `false`, commands whose `platform` field doesn't match
-/// [`Platform::current`] are excluded. When `show_all` is `true` they are
-/// included with `platform_filtered = true`.
+/// [`Platform::current`] are excluded, as are platform-less commands shadowed
+/// by a same-named entry for the current platform. When `show_all` is `true`
+/// every entry is included, foreign ones with `platform_filtered = true`.
 ///
 /// Returns [`DispatchError::GroupNotFound`] when the group has no entries.
 /// Results are sorted alphabetically by name.
@@ -210,6 +211,14 @@ pub fn list_in_group(
         });
     }
 
+    // Names with an entry for this platform, whose platform-less entry
+    // `run_in_group` would never pick.
+    let native: std::collections::BTreeSet<String> = in_group
+        .iter()
+        .filter(|cmd| cmd.platform.as_deref() == Some(current.as_str()))
+        .map(|cmd| cmd.name.clone())
+        .collect();
+
     let mut entries: Vec<DispatchListEntry> = in_group
         .into_iter()
         .filter_map(|cmd| {
@@ -218,8 +227,9 @@ pub fn list_in_group(
                 .as_deref()
                 .map(|p| p != current.as_str())
                 .unwrap_or(false);
+            let shadowed = cmd.platform.is_none() && native.contains(&cmd.name);
 
-            if filtered && !show_all {
+            if (filtered || shadowed) && !show_all {
                 return None;
             }
 
@@ -294,12 +304,12 @@ pub fn run_in_group_with(
     }
 
     let current = Platform::current();
-    let mut candidates = cfg
+    let candidates: Vec<&KryptCommand> = cfg
         .commands
         .iter()
         .filter(|c| c.group == group && c.name == name)
-        .peekable();
-    let Some(first) = candidates.peek().copied() else {
+        .collect();
+    let Some(&first) = candidates.first() else {
         return Err(DispatchError::CommandNotFound {
             group: group.to_owned(),
             name: name.to_owned(),
@@ -307,10 +317,14 @@ pub fn run_in_group_with(
         });
     };
 
-    // A command may be declared once per OS under the same group and name, so
-    // prefer the entry built for this platform over the first declared one.
+    // The same group and name may be repeated: without a platform, and once
+    // per OS that needs its own implementation. The entry for this platform
+    // wins, then the platform-less one.
     let cmd = candidates
-        .find(|c| c.platform.as_deref().is_none_or(|p| p == current.as_str()))
+        .iter()
+        .find(|c| c.platform.as_deref() == Some(current.as_str()))
+        .or_else(|| candidates.iter().find(|c| c.platform.is_none()))
+        .copied()
         .unwrap_or(first);
 
     // Platform gate.
@@ -611,6 +625,41 @@ mod tests {
             run_in_group_with("system", "nproc", &o, &process, &notifier, &mut prompter).unwrap();
         assert_eq!(report.steps_run, 1);
         assert_eq!(process.calls.borrow()[0].0, "native");
+    }
+
+    #[test]
+    fn run_in_group_prefers_platform_entry_over_platform_less() {
+        let toml = format!(
+            concat!(
+                "[[command]]\ngroup = \"env\"\nname = \"up\"\n",
+                "steps = [{{ run = [\"generic\"] }}]\n\n",
+                "[[command]]\ngroup = \"env\"\nname = \"up\"\n",
+                "platform = \"{current}\"\n",
+                "steps = [{{ run = [\"native\"] }}]\n",
+            ),
+            current = Platform::current().as_str(),
+        );
+        let (_dir, path) = write_config(&toml);
+        let o = opts(path);
+
+        let process = MockProcessExec::new([ok_result("")]);
+        let notifier = MockNotifier::default();
+        let mut prompter = MockPrompter::default();
+
+        run_in_group_with("env", "up", &o, &process, &notifier, &mut prompter).unwrap();
+        assert_eq!(process.calls.borrow()[0].0, "native");
+
+        let listed = list_in_group("env", &o, false).unwrap();
+        assert_eq!(
+            listed.len(),
+            1,
+            "the shadowed platform-less entry is hidden"
+        );
+        assert_eq!(
+            listed[0].platform.as_deref(),
+            Some(Platform::current().as_str())
+        );
+        assert_eq!(list_in_group("env", &o, true).unwrap().len(), 2);
     }
 
     // ── 4. run_in_group: steps execute, arg forwarding works ─────────────────

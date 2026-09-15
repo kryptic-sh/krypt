@@ -11,9 +11,10 @@ patch bumps.
 ### Fixed
 
 - `krypt <group> <name>` now runs the `[[command]]` entry declared for the
-  current platform when the same group and name are repeated per OS.
-  Previously dispatch took the first entry by name and failed with a platform
-  mismatch, so a Windows variant declared after a Linux one was unreachable.
+  current platform when the same group and name are repeated, falling back to
+  the entry without a `platform`. Previously dispatch took the first entry by
+  name, so a Windows variant declared after a Linux or platform-less one was
+  unreachable. `krypt <group>` lists only the entry that would run.
 - `krypt deps` with winget now passes `--id <pkg> --exact` to `winget list` and
   `winget install`. winget matches IDs by substring otherwise, so a package
   could be reported installed because a longer ID was (e.g. `OpenJS.NodeJS`
