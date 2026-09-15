@@ -13,6 +13,14 @@ updates:
       - dependencies
       - rust
     groups:
+      # gix, gix-actor and gix-worktree-state come from one git branch, so a
+      # bump to any of them moves all three and arrived as three PRs with the
+      # same Cargo.lock change. Listed first: a dependency joins the first
+      # group it matches.
+      gitoxide:
+        patterns:
+          - gix
+          - gix-*
       patch:
         update-types:
           - patch
@@ -32,3 +40,12 @@ updates:
     labels:
       - dependencies
       - github-actions
+    # Workflows float on major tags (`@v2`), which already track every minor
+    # and patch release. Dependabot still proposes pinning them to the newest
+    # full tag at the time it runs; in September 2026 that PR would have moved
+    # taiki-e/install-action from 2.87.12 back to 2.85.5.
+    ignore:
+      - dependency-name: '*'
+        update-types:
+          - version-update:semver-minor
+          - version-update:semver-patch
