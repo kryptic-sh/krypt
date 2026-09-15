@@ -44,6 +44,9 @@ patch bumps.
 
 ### Fixed
 
+- `krypt deps` with dnf now recognises a package installed under another name
+  that provides the listed one. It queried `rpm -q <name>`, so Fedora's `wget`
+  (installed as `wget2-wget`) was reinstalled on every run.
 - `krypt deps` with brew now recognises installed casks (e.g. `alacritty`,
   `firefox`) as installed. It queried `brew list --formula`, so every cask was
   reinstalled on each run and never reported as already installed.

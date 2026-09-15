@@ -28,8 +28,10 @@ impl PackageManager for Dnf {
         Ok(status == 0 && !stdout.trim().is_empty())
     }
 
+    /// `rpm -q --whatprovides`, so a name that another package provides counts
+    /// once `dnf install` has resolved it (Fedora's `wget` is `wget2-wget`).
     fn is_installed(&self, runner: &dyn Runner, pkg: &str) -> Result<bool, PackageError> {
-        let RunOutcome { status, .. } = runner.run("rpm", &["-q", pkg])?;
+        let RunOutcome { status, .. } = runner.run("rpm", &["-q", "--whatprovides", pkg])?;
         Ok(status == 0)
     }
 

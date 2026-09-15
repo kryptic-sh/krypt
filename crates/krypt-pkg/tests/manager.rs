@@ -90,13 +90,21 @@ fn dnf_install_batches_with_sudo() {
 
 #[test]
 fn dnf_is_installed_exit0() {
-    let runner = MockRunner::new().with("rpm", &["-q", "git"], MockResponse::success());
+    let runner = MockRunner::new().with(
+        "rpm",
+        &["-q", "--whatprovides", "git"],
+        MockResponse::success(),
+    );
     assert!(Dnf.is_installed(&runner, "git").unwrap());
 }
 
 #[test]
 fn dnf_is_installed_exit1() {
-    let runner = MockRunner::new().with("rpm", &["-q", "git"], MockResponse::failure());
+    let runner = MockRunner::new().with(
+        "rpm",
+        &["-q", "--whatprovides", "git"],
+        MockResponse::failure(),
+    );
     assert!(!Dnf.is_installed(&runner, "git").unwrap());
 }
 
