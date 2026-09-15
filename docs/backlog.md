@@ -43,17 +43,23 @@ terminal for `run` steps that have no `capture` (changes what users see for
 every command), or add a per-step opt-in such as `interactive = true` (schema
 change).
 
-### CI tests on latest stable, not the pinned toolchain
+### CI lints on latest stable, not the pinned toolchain
 
 The `clippy` and `test` jobs pass `toolchain: stable` to `setup-rust-toolchain`,
-which runs `rustup override` and so replaces `rust-toolchain.toml`: the
-2026-09-15 run tested with rustc 1.98.1 while the workspace pins 1.95.0 and
-declares `rust-version = "1.95"`. Since the `build` job now runs on every event,
-the pinned toolchain is at least compiled for every release target, but clippy
-and the test suite never run on it, so the MSRV claim is untested. Options: add
-a 1.95.0 leg to the test matrix (cost: three more jobs), or drop the override
-and test on the pinned toolchain only (loses the early warning from new stable
-lints).
+which runs `rustup override` and so replaces `rust-toolchain.toml` (rustc 1.98.1
+on 2026-09-15, against a 1.95.0 pin and `rust-version = "1.95"`). The `distro`
+job now runs the test suite on the pinned toolchain in four Linux containers,
+and `build` compiles it for every release target, but clippy and the macOS and
+Windows tests never run on it. Options: a 1.95.0 clippy leg, or dropping the
+override (loses the early warning from new stable lints).
+
+### Windows notifications use Windows PowerShell 5.1
+
+`notify::command_for(NotifyBackend::PowerShell, ..)` spawns `powershell`, the
+5.1 that ships with Windows, not PowerShell 7 (`pwsh`). The mxaddict dotfiles
+standardise on PowerShell 7. `System.Windows.Forms` is available in both on
+Windows, so `pwsh` first with a `powershell` fallback would work; it ties into
+the MessageBox-versus-toast choice above.
 
 ## Deferred
 
@@ -76,6 +82,11 @@ since logging a battery reading only works on Linux.
 
 ## Unverified
 
+- **`scoop info` as the `--check` lookup.** `Scoop::exists` treats a non-zero
+  exit as "missing"; not run against a real scoop install.
+- **Brew casks as installed.** `Brew::is_installed` runs `brew list --versions`
+  for casks too; verified by the dotfiles deps workflow's idempotent `core`
+  install on macOS (Alacritty is a cask), not by a krypt test.
 - **Re-deploying over a read-only file on Windows.** `copy::copy_atomic`
   finishes with `fs::rename(tmp, dst)`. `fs::copy` carries the read-only
   attribute across, and renaming over a read-only destination fails on Windows,
