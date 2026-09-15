@@ -14,10 +14,12 @@ impl PackageManager for Brew {
         which::which("brew").is_ok()
     }
 
-    /// `brew info` resolves formulae and casks. It does not tap a tap that is
-    /// not installed yet, so for a tap-qualified `user/repo/name` the tap is
-    /// added first — as `brew install` would do — and a tap that cannot be
-    /// added means the package is missing.
+    /// `brew info --json=v2` resolves formulae and casks; one Homebrew has
+    /// disabled (e.g. a cask that fails Gatekeeper) still resolves but cannot
+    /// be installed, so it counts as missing. `brew info` does not tap a tap
+    /// that is not installed yet, so for a tap-qualified `user/repo/name` the
+    /// tap is added first — as `brew install` would do — and a tap that cannot
+    /// be added means the package is missing.
     fn exists(&self, runner: &dyn Runner, pkg: &str) -> Result<bool, PackageError> {
         if let Some((tap, _)) = pkg.rsplit_once('/').filter(|(tap, _)| tap.contains('/')) {
             let RunOutcome { status, .. } = runner.run("brew", &["tap", tap])?;
@@ -25,8 +27,17 @@ impl PackageManager for Brew {
                 return Ok(false);
             }
         }
-        let RunOutcome { status, .. } = runner.run("brew", &["info", pkg])?;
-        Ok(status == 0)
+        let RunOutcome { status, stdout, .. } = runner.run("brew", &["info", "--json=v2", pkg])?;
+        if status != 0 {
+            return Ok(false);
+        }
+        let info: serde_json::Value = serde_json::from_str(&stdout)
+            .map_err(|e| PackageError::Io(std::io::Error::other(format!("brew info JSON: {e}"))))?;
+        Ok(["formulae", "casks"]
+            .iter()
+            .filter_map(|kind| info[kind].as_array())
+            .flatten()
+            .any(|entry| entry["disabled"] != true))
     }
 
     /// `brew list --versions` covers casks as well as formulae; limiting it to
