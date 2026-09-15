@@ -50,6 +50,10 @@ patch bumps.
   the default `~/.local/log/bathist.log` through `USERPROFILE` on Windows, like
   every other `${HOME}` path. They read `$HOME` directly and failed with "HOME
   environment variable not set" in a normal Windows shell.
+- `src_glob` links now match when the dotfiles checkout's own path contains `[`,
+  `]`, `*` or `?`. The repo path was joined into the glob pattern unescaped, so
+  a checkout at e.g. `~/src/dots[old]` read `[old]` as a character class and the
+  entry silently deployed nothing.
 
 ### CI / Build
 

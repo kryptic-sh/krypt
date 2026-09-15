@@ -187,6 +187,32 @@ dst = "${HOME}/.config/nvim/"
 }
 
 #[test]
+fn glob_matches_when_repo_path_contains_glob_metacharacters() {
+    let parent = TempDir::new().unwrap();
+    let home = TempDir::new().unwrap();
+    // `[po]` would be a character class if the repo path were not escaped.
+    // (`*` and `?` are not valid in Windows file names, so brackets it is.)
+    let repo = parent.path().join("re[po]");
+    fs::create_dir_all(repo.join(".config/app")).unwrap();
+    fs::write(repo.join(".config/app/app.conf"), b"x").unwrap();
+
+    let cfg = parse(
+        r#"
+[[link]]
+src_glob = ".config/app/**/*"
+dst = "${HOME}/.config/app/"
+"#,
+    );
+    let resolver = make_resolver(home.path());
+    let p = plan(&cfg, &repo, &resolver).unwrap();
+    assert_eq!(p.actions.len(), 1, "actions: {:?}", p.actions);
+    assert_eq!(
+        p.actions[0].dst(),
+        home.path().join(".config/app/").join("app.conf")
+    );
+}
+
+#[test]
 fn platform_filter_skips_other_os() {
     let repo = TempDir::new().unwrap();
     let home = TempDir::new().unwrap();

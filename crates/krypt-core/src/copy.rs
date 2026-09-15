@@ -21,7 +21,7 @@
 //! CLI's only escape hatch today is `--force`.
 
 use std::fs::{self, File};
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 use std::time::SystemTime;
 
 use serde::{Deserialize, Serialize};
@@ -219,7 +219,10 @@ fn plan_link(
     }
 
     if let Some(src_glob) = &link.src_glob {
-        let full_pattern = repo_root.join(src_glob).to_string_lossy().into_owned();
+        let full_pattern = Path::new(&literal_glob_root(repo_root))
+            .join(src_glob)
+            .to_string_lossy()
+            .into_owned();
         let matches = glob::glob(&full_pattern).map_err(|e| PlanError::Glob {
             pattern: full_pattern.clone(),
             reason: e.to_string(),
@@ -281,6 +284,22 @@ fn build_action(src: &Path, dst: &Path, kind: EntryKind) -> Action {
             kind,
         }
     }
+}
+
+/// `root` as a glob pattern that matches only itself, so a checkout path
+/// containing `[`, `]`, `*` or `?` is not read as glob syntax. A Windows path
+/// prefix (`C:`, `\\?\C:`) is kept verbatim: `glob` parses it separately, and
+/// a verbatim prefix itself contains `?`.
+fn literal_glob_root(root: &Path) -> String {
+    let mut components = root.components().peekable();
+    let mut pattern = String::new();
+    if let Some(Component::Prefix(prefix)) = components.peek() {
+        pattern.push_str(&prefix.as_os_str().to_string_lossy());
+        components.next();
+    }
+    let rest: PathBuf = components.collect();
+    pattern.push_str(&glob::Pattern::escape(&rest.to_string_lossy()));
+    pattern
 }
 
 /// Leading directory component of a glob pattern (everything before the
@@ -464,6 +483,25 @@ mod tests {
         assert_eq!(glob_prefix_of("**/*"), PathBuf::new());
         assert_eq!(glob_prefix_of("a/b/c"), PathBuf::from("a/b/c"));
         assert_eq!(glob_prefix_of("foo/*.toml"), PathBuf::from("foo"));
+    }
+
+    #[test]
+    fn literal_glob_root_escapes_metacharacters() {
+        assert_eq!(
+            PathBuf::from(literal_glob_root(Path::new("dots/re[po]"))),
+            Path::new("dots").join("re[[]po[]]")
+        );
+    }
+
+    // Only Windows parses `C:` / `\\?\C:` into a path prefix.
+    #[cfg(windows)]
+    #[test]
+    fn literal_glob_root_keeps_windows_prefixes_verbatim() {
+        assert_eq!(literal_glob_root(Path::new(r"C:\re[po]")), r"C:\re[[]po[]]");
+        assert_eq!(
+            literal_glob_root(Path::new(r"\\?\C:\re[po]")),
+            r"\\?\C:\re[[]po[]]"
+        );
     }
 
     #[test]
