@@ -2,8 +2,17 @@
 //!
 //! winget does not reliably accept multiple packages in one call, so each
 //! package is installed in a separate process invocation.
+//!
+//! Every call pins the package with `--id <pkg> --exact`: without `--exact`
+//! winget matches IDs by substring, so `OpenJS.NodeJS` would report an
+//! installed `OpenJS.NodeJS.22` as present, and an install query can resolve
+//! to several packages and refuse to pick one.
 
 use crate::manager::{PackageError, PackageManager, RunOutcome, Runner};
+
+/// `APPINSTALLER_CLI_ERROR_UPDATE_NOT_APPLICABLE`: `winget install` found the
+/// package already installed with no newer version to upgrade to.
+pub const UPDATE_NOT_APPLICABLE: i32 = 0x8A15_002B_u32.cast_signed();
 
 /// Package manager implementation for Windows (winget).
 pub struct Winget;
@@ -18,7 +27,8 @@ impl PackageManager for Winget {
     }
 
     fn is_installed(&self, runner: &dyn Runner, pkg: &str) -> Result<bool, PackageError> {
-        let RunOutcome { status, stdout, .. } = runner.run("winget", &["list", "--id", pkg])?;
+        let RunOutcome { status, stdout, .. } =
+            runner.run("winget", &["list", "--id", pkg, "--exact"])?;
         Ok(status == 0 && !stdout.trim().is_empty())
     }
 
@@ -28,13 +38,15 @@ impl PackageManager for Winget {
                 "winget",
                 &[
                     "install",
+                    "--id",
+                    pkg.as_str(),
+                    "--exact",
                     "--silent",
                     "--accept-package-agreements",
                     "--accept-source-agreements",
-                    pkg.as_str(),
                 ],
             )?;
-            if status != 0 {
+            if status != 0 && status != UPDATE_NOT_APPLICABLE {
                 return Err(PackageError::ExitFailure { status, stderr });
             }
         }

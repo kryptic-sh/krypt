@@ -198,27 +198,68 @@ fn winget_install_one_call_per_package() {
         2,
         "winget should invoke one process per package"
     );
-    for (cmd, args) in &calls {
+    for ((cmd, args), pkg) in calls.iter().zip(["foo", "bar"]) {
         assert_eq!(cmd, "winget");
         assert_eq!(
-            &args[..4],
+            args,
             &[
                 "install",
+                "--id",
+                pkg,
+                "--exact",
                 "--silent",
                 "--accept-package-agreements",
                 "--accept-source-agreements"
             ]
         );
     }
-    assert_eq!(calls[0].1[4], "foo");
-    assert_eq!(calls[1].1[4], "bar");
+}
+
+#[test]
+fn winget_install_treats_no_applicable_upgrade_as_installed() {
+    let runner = MockRunner::new().with(
+        "winget",
+        &[
+            "install",
+            "--id",
+            "Git.Git",
+            "--exact",
+            "--silent",
+            "--accept-package-agreements",
+            "--accept-source-agreements",
+        ],
+        MockResponse {
+            status: krypt_pkg::winget::UPDATE_NOT_APPLICABLE,
+            stdout: "No available upgrade found.".into(),
+            stderr: String::new(),
+        },
+    );
+    Winget.install(&runner, &["Git.Git".to_string()]).unwrap();
+}
+
+#[test]
+fn winget_install_other_failure_is_error() {
+    let runner = MockRunner::new().with(
+        "winget",
+        &[
+            "install",
+            "--id",
+            "Git.Git",
+            "--exact",
+            "--silent",
+            "--accept-package-agreements",
+            "--accept-source-agreements",
+        ],
+        MockResponse::failure(),
+    );
+    assert!(Winget.install(&runner, &["Git.Git".to_string()]).is_err());
 }
 
 #[test]
 fn winget_is_installed_non_empty() {
     let runner = MockRunner::new().with(
         "winget",
-        &["list", "--id", "Git.Git"],
+        &["list", "--id", "Git.Git", "--exact"],
         MockResponse {
             status: 0,
             stdout: "Git.Git  2.44.0".into(),
@@ -232,7 +273,7 @@ fn winget_is_installed_non_empty() {
 fn winget_is_installed_empty() {
     let runner = MockRunner::new().with(
         "winget",
-        &["list", "--id", "Git.Git"],
+        &["list", "--id", "Git.Git", "--exact"],
         MockResponse {
             status: 0,
             stdout: String::new(),

@@ -14,6 +14,13 @@ patch bumps.
   current platform when the same group and name are repeated per OS.
   Previously dispatch took the first entry by name and failed with a platform
   mismatch, so a Windows variant declared after a Linux one was unreachable.
+- `krypt deps` with winget now passes `--id <pkg> --exact` to `winget list` and
+  `winget install`. winget matches IDs by substring otherwise, so a package
+  could be reported installed because a longer ID was (e.g. `OpenJS.NodeJS`
+  matching `OpenJS.NodeJS.22`).
+- `krypt deps` with winget no longer reports a failure when `winget install`
+  exits with `APPINSTALLER_CLI_ERROR_UPDATE_NOT_APPLICABLE` (`0x8A15002B`),
+  which winget returns for a package that is already installed and current.
 
 ## [0.2.2] - 2026-05-18
 
