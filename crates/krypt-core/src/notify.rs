@@ -33,6 +33,8 @@ use std::process::Stdio;
 
 use thiserror::Error;
 
+use crate::paths::Platform;
+
 // ─── Error ───────────────────────────────────────────────────────────────────
 
 /// Errors that can occur while dispatching a notification.
@@ -127,31 +129,24 @@ pub fn detect(override_name: Option<&str>) -> NotifyBackend {
 }
 
 fn auto_detect() -> NotifyBackend {
-    #[cfg(target_os = "macos")]
-    {
-        if which::which("terminal-notifier").is_ok() {
-            return NotifyBackend::TerminalNotifier;
-        }
-        if which::which("osascript").is_ok() {
-            return NotifyBackend::Osascript;
-        }
-    }
+    auto_detect_for(Platform::current(), |program| which::which(program).is_ok())
+}
 
-    #[cfg(target_os = "windows")]
-    {
-        if which::which("powershell").is_ok() {
-            return NotifyBackend::PowerShell;
-        }
-    }
-
-    #[cfg(all(not(target_os = "macos"), not(target_os = "windows")))]
-    {
-        if which::which("notify-send").is_ok() {
-            return NotifyBackend::NotifySend;
-        }
-    }
-
-    NotifyBackend::Stderr
+/// The first backend, in `platform`'s preference order, whose program
+/// `program_exists` reports; [`NotifyBackend::Stderr`] when none is.
+fn auto_detect_for(platform: Platform, program_exists: impl Fn(&str) -> bool) -> NotifyBackend {
+    let candidates: &[(&str, NotifyBackend)] = match platform {
+        Platform::Macos => &[
+            ("terminal-notifier", NotifyBackend::TerminalNotifier),
+            ("osascript", NotifyBackend::Osascript),
+        ],
+        Platform::Windows => &[("powershell", NotifyBackend::PowerShell)],
+        Platform::Linux => &[("notify-send", NotifyBackend::NotifySend)],
+    };
+    candidates
+        .iter()
+        .find(|(program, _)| program_exists(program))
+        .map_or(NotifyBackend::Stderr, |(_, backend)| *backend)
 }
 
 // ─── Command construction (pure, testable) ────────────────────────────────────
@@ -288,14 +283,51 @@ impl crate::runner::Notifier for AutoNotifier {
 mod tests {
     use super::*;
 
-    // 1. detect(None) → Stderr when no backends are in PATH.
-    // We can't easily manipulate PATH in unit tests without unsafe tricks, but
-    // we can verify the code path compiles and returns a valid backend.
+    // 1. Auto-detection follows each platform's preference order. Pure, so
+    //    every platform's order is checked on every OS.
     #[test]
-    fn detect_none_returns_valid_backend() {
-        let b = detect(None);
-        // Any variant is acceptable; we just confirm it doesn't panic.
-        let _ = b;
+    fn auto_detect_prefers_terminal_notifier_then_osascript_on_macos() {
+        let all = |_: &str| true;
+        assert_eq!(
+            auto_detect_for(Platform::Macos, all),
+            NotifyBackend::TerminalNotifier
+        );
+        let no_terminal_notifier = |p: &str| p != "terminal-notifier";
+        assert_eq!(
+            auto_detect_for(Platform::Macos, no_terminal_notifier),
+            NotifyBackend::Osascript
+        );
+    }
+
+    #[test]
+    fn auto_detect_uses_powershell_on_windows_and_notify_send_on_linux() {
+        let all = |_: &str| true;
+        assert_eq!(
+            auto_detect_for(Platform::Windows, all),
+            NotifyBackend::PowerShell
+        );
+        assert_eq!(
+            auto_detect_for(Platform::Linux, all),
+            NotifyBackend::NotifySend
+        );
+    }
+
+    #[test]
+    fn auto_detect_ignores_other_platforms_backends() {
+        // notify-send on a Mac, osascript on Linux: never picked.
+        let only = |wanted: &'static str| move |p: &str| p == wanted;
+        assert_eq!(
+            auto_detect_for(Platform::Macos, only("notify-send")),
+            NotifyBackend::Stderr
+        );
+        assert_eq!(
+            auto_detect_for(Platform::Linux, only("osascript")),
+            NotifyBackend::Stderr
+        );
+        assert_eq!(
+            auto_detect_for(Platform::Windows, only("notify-send")),
+            NotifyBackend::Stderr
+        );
     }
 
     // 2. detect(Some("notify-send")) → NotifySend, bypasses which.
@@ -341,11 +373,11 @@ mod tests {
         assert_eq!(escape_applescript("plain"), "plain");
         // Newlines pass through unchanged (AppleScript handles them).
         assert_eq!(escape_applescript("line\nbreak"), "line\nbreak");
-        // Round-trip: escape then unescape manually.
-        let input = r#"title with "quotes" and \backslash"#;
-        let escaped = escape_applescript(input);
-        // The escaped string should not contain unescaped quotes.
-        assert!(!escaped.contains("\\\"") || escaped.contains("\\\\"));
+        // Quotes and backslashes together.
+        assert_eq!(
+            escape_applescript(r#"title with "quotes" and \backslash"#),
+            r#"title with \"quotes\" and \\backslash"#
+        );
     }
 
     // 8. command_for: verify argument shapes without spawning.
