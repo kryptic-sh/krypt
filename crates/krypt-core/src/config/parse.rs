@@ -29,7 +29,7 @@ use std::{env, fs, io};
 
 use thiserror::Error;
 
-use super::schema::{Config, Link, PromptSection, Step};
+use super::schema::{Config, Link, Platforms, PromptSection, Step};
 use crate::paths::Resolver;
 
 /// Errors that can come out of parsing or validating a `.krypt.toml`.
@@ -174,15 +174,31 @@ fn validate_link(link: &Link, loc: &str, path: &Path) -> Result<(), ConfigError>
     validate_platform(&link.platform, loc, path)
 }
 
-fn validate_platform(platform: &Option<String>, loc: &str, path: &Path) -> Result<(), ConfigError> {
-    if let Some(p) = platform
-        && !matches!(p.as_str(), "linux" | "macos" | "windows")
-    {
-        return Err(ConfigError::Validation {
-            path: path.to_owned(),
-            location: loc.into(),
-            message: format!("platform = {p:?} is not one of \"linux\" / \"macos\" / \"windows\""),
-        });
+fn validate_platform(
+    platform: &Option<Platforms>,
+    loc: &str,
+    path: &Path,
+) -> Result<(), ConfigError> {
+    let Some(platforms) = platform else {
+        return Ok(());
+    };
+    let invalid = |message: String| ConfigError::Validation {
+        path: path.to_owned(),
+        location: loc.into(),
+        message,
+    };
+    // An empty list would gate the entry off everywhere, silently.
+    if platforms.names().is_empty() {
+        return Err(invalid(
+            "platform = [] matches no platform; omit `platform` to allow every platform".into(),
+        ));
+    }
+    for p in platforms.names() {
+        if !matches!(p.as_str(), "linux" | "macos" | "windows") {
+            return Err(invalid(format!(
+                "platform = {p:?} is not one of \"linux\" / \"macos\" / \"windows\""
+            )));
+        }
     }
     Ok(())
 }
@@ -487,6 +503,53 @@ dst = "/tmp/x"
 platform = "freebsd"
 "#);
         assert!(matches!(e, ConfigError::Validation { .. }));
+    }
+
+    #[test]
+    fn platform_accepts_a_list() {
+        let cfg = ok(r#"
+[[link]]
+src = "a"
+dst = "/tmp/x"
+platform = ["linux", "macos"]
+"#);
+        let platforms = cfg.links[0].platform.as_ref().unwrap();
+        assert!(platforms.contains("linux"));
+        assert!(platforms.contains("macos"));
+        assert!(!platforms.contains("windows"));
+    }
+
+    #[test]
+    fn platform_list_entries_must_be_known() {
+        let e = err(r#"
+[[command]]
+group = "x"
+name = "y"
+platform = ["linux", "freebsd"]
+steps = [{ run = ["true"] }]
+"#);
+        match e {
+            ConfigError::Validation { message, .. } => {
+                assert!(message.contains("freebsd"), "got: {message}");
+            }
+            other => panic!("expected Validation, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn platform_list_must_not_be_empty() {
+        let e = err(r#"
+[[template]]
+src = "a"
+dst = "/tmp/x"
+platform = []
+"#);
+        match e {
+            ConfigError::Validation { message, .. } => {
+                assert!(message.contains("matches no platform"), "got: {message}");
+            }
+            other => panic!("expected Validation, got {other:?}"),
+        }
     }
 
     #[test]

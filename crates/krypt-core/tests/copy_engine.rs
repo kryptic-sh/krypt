@@ -246,6 +246,37 @@ platform = "windows"
 }
 
 #[test]
+fn platform_list_keeps_entry_on_every_listed_os() {
+    let repo = TempDir::new().unwrap();
+    let home = TempDir::new().unwrap();
+    fs::write(repo.path().join("unix"), b"x").unwrap();
+
+    let cfg = parse(
+        r#"
+[[link]]
+src = "unix"
+dst = "${HOME}/unix"
+platform = ["linux", "macos"]
+"#,
+    );
+    let mut env = std::collections::HashMap::new();
+    env.insert("HOME".into(), home.path().to_string_lossy().to_string());
+    env.insert(
+        "USERPROFILE".into(),
+        home.path().to_string_lossy().to_string(),
+    );
+    for (platform, kept) in [
+        (Platform::Linux, 1),
+        (Platform::Macos, 1),
+        (Platform::Windows, 0),
+    ] {
+        let resolver = Resolver::for_platform(platform).with_env(env.clone());
+        let p = plan(&cfg, repo.path(), &resolver).unwrap();
+        assert_eq!(p.actions.len(), kept, "on {platform}");
+    }
+}
+
+#[test]
 fn template_entries_produce_actions() {
     let repo = TempDir::new().unwrap();
     let home = TempDir::new().unwrap();

@@ -1198,7 +1198,13 @@ fn cmd_menu(args: MenuArgs) -> Result<ExitCode> {
             let name_width = entries.iter().map(|e| e.name.len()).max().unwrap_or(0);
             for entry in &entries {
                 let platform_note = if entry.platform_filtered {
-                    format!(" ({})", entry.platform.as_deref().unwrap_or("?"))
+                    format!(
+                        " ({})",
+                        entry
+                            .platform
+                            .as_ref()
+                            .map_or("?".into(), ToString::to_string)
+                    )
                 } else {
                     String::new()
                 };
@@ -1299,7 +1305,13 @@ fn cmd_external(args: Vec<String>) -> Result<ExitCode> {
                     let name_width = entries.iter().map(|e| e.name.len()).max().unwrap_or(0);
                     for entry in &entries {
                         let platform_note = if entry.platform_filtered {
-                            format!(" ({})", entry.platform.as_deref().unwrap_or("?"))
+                            format!(
+                                " ({})",
+                                entry
+                                    .platform
+                                    .as_ref()
+                                    .map_or("?".into(), ToString::to_string)
+                            )
                         } else {
                             String::new()
                         };

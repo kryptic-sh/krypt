@@ -21,5 +21,6 @@ mod schema;
 
 pub use parse::{ConfigError, parse_file, parse_str, resolve_step_vars};
 pub use schema::{
-    Command, Config, DepsGroup, Hook, Link, Meta, PromptField, PromptSection, Step, Template,
+    Command, Config, DepsGroup, Hook, Link, Meta, Platforms, PromptField, PromptSection, Step,
+    Template,
 };

@@ -8,6 +8,19 @@ patch bumps.
 
 ## [Unreleased]
 
+### Added
+
+- `platform` on `[[link]]`, `[[template]]` and `[[command]]` accepts a list,
+  e.g. `platform = ["linux", "macos"]`, so an entry shared by several OSes no
+  longer has to be repeated once per OS. A single string still works; an empty
+  list is rejected at parse time.
+
+### Breaking
+
+- `krypt_core::config::{Link, Template, Command}::platform` and
+  `krypt_core::dispatch::DispatchListEntry::platform` are now
+  `Option<Platforms>` instead of `Option<String>`.
+
 ### Fixed
 
 - `krypt <group> <name>` now runs the `[[command]]` entry declared for the

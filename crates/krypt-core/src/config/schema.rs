@@ -100,10 +100,78 @@ pub struct Link {
     /// Destination path. May contain `${VAR}` placeholders.
     pub dst: String,
 
-    /// Optional OS gate. One of `linux`, `macos`, `windows`. Multiple OSes:
-    /// duplicate the link entry. Omitted = all platforms.
+    /// Optional OS gate: one of `linux`, `macos`, `windows`, or a list of
+    /// them. Omitted = all platforms.
     #[serde(default)]
-    pub platform: Option<String>,
+    pub platform: Option<Platforms>,
+}
+
+/// The `platform` gate of a [`Link`], [`Template`] or [`Command`]: one
+/// platform name (`platform = "linux"`) or several
+/// (`platform = ["linux", "macos"]`).
+///
+/// Names are validated when the config is parsed; see
+/// [`Platforms::names`] for the raw values.
+#[derive(Debug, Deserialize, Serialize, Clone, PartialEq, Eq)]
+#[serde(from = "OneOrMany", into = "OneOrMany")]
+pub struct Platforms(Vec<String>);
+
+impl Platforms {
+    /// The platform names as written in the config.
+    pub fn names(&self) -> &[String] {
+        &self.0
+    }
+
+    /// Whether `platform` (a slug such as `"linux"`) is one of the names.
+    pub fn contains(&self, platform: &str) -> bool {
+        self.0.iter().any(|p| p == platform)
+    }
+}
+
+impl From<&str> for Platforms {
+    fn from(platform: &str) -> Self {
+        Self(vec![platform.to_owned()])
+    }
+}
+
+impl<const N: usize> From<[&str; N]> for Platforms {
+    fn from(platforms: [&str; N]) -> Self {
+        Self(platforms.iter().map(|p| (*p).to_owned()).collect())
+    }
+}
+
+/// Renders as the config would spell it: `linux`, or `linux, macos`.
+impl std::fmt::Display for Platforms {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.0.join(", "))
+    }
+}
+
+#[derive(Deserialize, Serialize)]
+#[serde(untagged)]
+enum OneOrMany {
+    One(String),
+    Many(Vec<String>),
+}
+
+impl From<OneOrMany> for Platforms {
+    fn from(value: OneOrMany) -> Self {
+        match value {
+            OneOrMany::One(p) => Self(vec![p]),
+            OneOrMany::Many(ps) => Self(ps),
+        }
+    }
+}
+
+impl From<Platforms> for OneOrMany {
+    fn from(value: Platforms) -> Self {
+        let mut names = value.0;
+        if names.len() == 1 {
+            OneOrMany::One(names.remove(0))
+        } else {
+            OneOrMany::Many(names)
+        }
+    }
 }
 
 /// `[[template]]` entry — a file copied like a `[[link]]`, but with prompt-
@@ -124,7 +192,7 @@ pub struct Template {
 
     /// Optional OS gate. Same semantics as [`Link::platform`].
     #[serde(default)]
-    pub platform: Option<String>,
+    pub platform: Option<Platforms>,
 }
 
 /// `[prompts.<name>]` section — an interactive wizard subsection.
@@ -265,10 +333,11 @@ pub struct Command {
 
     /// Optional OS gate. Same semantics as [`Link::platform`]. To give a
     /// command a different implementation per OS, repeat the entry under the
-    /// same `group` and `name`: dispatch runs the entry for the current
-    /// platform, falling back to the one without a `platform`.
+    /// same `group` and `name`: dispatch runs the entry whose `platform`
+    /// includes the current one, falling back to the one without a
+    /// `platform`.
     #[serde(default)]
-    pub platform: Option<String>,
+    pub platform: Option<Platforms>,
 
     /// Ordered execution steps.
     pub steps: Vec<Step>,

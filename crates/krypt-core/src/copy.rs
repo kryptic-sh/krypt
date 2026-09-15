@@ -27,7 +27,7 @@ use std::time::SystemTime;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
-use crate::config::{Config, Link, Template};
+use crate::config::{Config, Link, Platforms, Template};
 use crate::paths::{ResolveError, Resolver};
 
 // ─── Errors ─────────────────────────────────────────────────────────────────
@@ -317,16 +317,20 @@ fn glob_prefix_of(pattern: &str) -> PathBuf {
     prefix
 }
 
-fn platform_matches(entry_platform: &Option<String>, current: &str) -> Result<bool, PlanError> {
-    let Some(p) = entry_platform else {
+fn platform_matches(entry_platform: &Option<Platforms>, current: &str) -> Result<bool, PlanError> {
+    let Some(platforms) = entry_platform else {
         return Ok(true);
     };
-    match p.as_str() {
-        "linux" | "macos" | "windows" => Ok(p == current),
-        other => Err(PlanError::UnknownPlatform {
-            value: other.to_string(),
-        }),
+    if let Some(unknown) = platforms
+        .names()
+        .iter()
+        .find(|p| !matches!(p.as_str(), "linux" | "macos" | "windows"))
+    {
+        return Err(PlanError::UnknownPlatform {
+            value: unknown.clone(),
+        });
     }
+    Ok(platforms.contains(current))
 }
 
 // ─── Executor ───────────────────────────────────────────────────────────────
@@ -517,10 +521,22 @@ mod tests {
     }
 
     #[test]
+    fn platform_match_accepts_any_listed_os() {
+        let unix = Some(Platforms::from(["linux", "macos"]));
+        assert!(platform_matches(&unix, "linux").unwrap());
+        assert!(platform_matches(&unix, "macos").unwrap());
+        assert!(!platform_matches(&unix, "windows").unwrap());
+    }
+
+    #[test]
     fn platform_match_rejects_unknown() {
         assert!(matches!(
             platform_matches(&Some("freebsd".into()), "linux"),
             Err(PlanError::UnknownPlatform { .. })
+        ));
+        assert!(matches!(
+            platform_matches(&Some(["linux", "freebsd"].into()), "linux"),
+            Err(PlanError::UnknownPlatform { value }) if value == "freebsd"
         ));
     }
 

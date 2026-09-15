@@ -29,7 +29,7 @@ use std::path::PathBuf;
 
 use thiserror::Error;
 
-use crate::config::Command as KryptCommand;
+use crate::config::{Command as KryptCommand, Platforms};
 use crate::include::{IncludeError, load_with_includes};
 use crate::paths::Platform;
 use crate::predicate::{DefaultPredicateEnv, default_predicate_evaluator};
@@ -61,7 +61,7 @@ pub struct DispatchListEntry {
     /// and it was included only because `show_all = true` was requested.
     pub platform_filtered: bool,
     /// The declared platform restriction, if any.
-    pub platform: Option<String>,
+    pub platform: Option<Platforms>,
 }
 
 /// Summary of a completed dispatch run.
@@ -131,6 +131,13 @@ pub enum DispatchError {
     /// The step runner returned an error.
     #[error("runner error: {0}")]
     Runner(#[from] Box<RunnerError>),
+}
+
+/// Whether `cmd` carries a `platform` gate that lists `current`.
+fn gated_to(cmd: &KryptCommand, current: Platform) -> bool {
+    cmd.platform
+        .as_ref()
+        .is_some_and(|p| p.contains(current.as_str()))
 }
 
 fn format_groups(groups: &[String]) -> String {
@@ -215,18 +222,14 @@ pub fn list_in_group(
     // `run_in_group` would never pick.
     let native: std::collections::BTreeSet<String> = in_group
         .iter()
-        .filter(|cmd| cmd.platform.as_deref() == Some(current.as_str()))
+        .filter(|cmd| gated_to(cmd, current))
         .map(|cmd| cmd.name.clone())
         .collect();
 
     let mut entries: Vec<DispatchListEntry> = in_group
         .into_iter()
         .filter_map(|cmd| {
-            let filtered = cmd
-                .platform
-                .as_deref()
-                .map(|p| p != current.as_str())
-                .unwrap_or(false);
+            let filtered = cmd.platform.is_some() && !gated_to(&cmd, current);
             let shadowed = cmd.platform.is_none() && native.contains(&cmd.name);
 
             if (filtered || shadowed) && !show_all {
@@ -318,23 +321,23 @@ pub fn run_in_group_with(
     };
 
     // The same group and name may be repeated: without a platform, and once
-    // per OS that needs its own implementation. The entry for this platform
-    // wins, then the platform-less one.
+    // per OS (or set of OSes) that needs its own implementation. The entry
+    // listing this platform wins, then the platform-less one.
     let cmd = candidates
         .iter()
-        .find(|c| c.platform.as_deref() == Some(current.as_str()))
+        .find(|c| gated_to(c, current))
         .or_else(|| candidates.iter().find(|c| c.platform.is_none()))
         .copied()
         .unwrap_or(first);
 
     // Platform gate.
     if let Some(ref required) = cmd.platform
-        && required.as_str() != current.as_str()
+        && !required.contains(current.as_str())
     {
         return Err(DispatchError::PlatformMismatch {
             group: group.to_owned(),
             name: name.to_owned(),
-            required: required.clone(),
+            required: required.to_string(),
             current: current.to_string(),
         });
     }
@@ -628,6 +631,49 @@ mod tests {
     }
 
     #[test]
+    fn run_in_group_matches_a_platform_list() {
+        let others: Vec<&str> = ["linux", "macos", "windows"]
+            .into_iter()
+            .filter(|p| *p != Platform::current().as_str())
+            .collect();
+        let toml = format!(
+            concat!(
+                "[[command]]\ngroup = \"system\"\nname = \"foreign\"\n",
+                "platform = [\"{a}\", \"{b}\"]\n",
+                "steps = [{{ run = [\"foreign\"] }}]\n\n",
+                "[[command]]\ngroup = \"system\"\nname = \"nproc\"\n",
+                "platform = [\"{a}\", \"{current}\"]\n",
+                "steps = [{{ run = [\"native\"] }}]\n",
+            ),
+            a = others[0],
+            b = others[1],
+            current = Platform::current().as_str(),
+        );
+        let (_dir, path) = write_config(&toml);
+        let o = opts(path);
+
+        let process = MockProcessExec::new([ok_result("")]);
+        let notifier = MockNotifier::default();
+        let mut prompter = MockPrompter::default();
+
+        run_in_group_with("system", "nproc", &o, &process, &notifier, &mut prompter).unwrap();
+        assert_eq!(process.calls.borrow()[0].0, "native");
+
+        let err = run_in_group_with("system", "foreign", &o, &process, &notifier, &mut prompter)
+            .unwrap_err();
+        match err {
+            DispatchError::PlatformMismatch { required, .. } => {
+                assert_eq!(required, format!("{}, {}", others[0], others[1]));
+            }
+            other => panic!("expected PlatformMismatch, got {other:?}"),
+        }
+
+        let listed = list_in_group("system", &o, false).unwrap();
+        let names: Vec<&str> = listed.iter().map(|e| e.name.as_str()).collect();
+        assert_eq!(names, ["nproc"]);
+    }
+
+    #[test]
     fn run_in_group_prefers_platform_entry_over_platform_less() {
         let toml = format!(
             concat!(
@@ -656,8 +702,8 @@ mod tests {
             "the shadowed platform-less entry is hidden"
         );
         assert_eq!(
-            listed[0].platform.as_deref(),
-            Some(Platform::current().as_str())
+            listed[0].platform,
+            Some(Platforms::from(Platform::current().as_str()))
         );
         assert_eq!(list_in_group("env", &o, true).unwrap().len(), 2);
     }
