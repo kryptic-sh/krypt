@@ -118,7 +118,7 @@ fn brew_install_no_sudo() {
 fn brew_is_installed_non_empty_stdout() {
     let runner = MockRunner::new().with(
         "brew",
-        &["list", "--formula", "--versions", "git"],
+        &["list", "--versions", "git"],
         MockResponse {
             status: 0,
             stdout: "git 2.44.0".into(),
@@ -132,7 +132,7 @@ fn brew_is_installed_non_empty_stdout() {
 fn brew_is_installed_empty_stdout() {
     let runner = MockRunner::new().with(
         "brew",
-        &["list", "--formula", "--versions", "git"],
+        &["list", "--versions", "git"],
         MockResponse {
             status: 0,
             stdout: String::new(),

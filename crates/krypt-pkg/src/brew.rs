@@ -20,9 +20,10 @@ impl PackageManager for Brew {
         Ok(status == 0)
     }
 
+    /// `brew list --versions` covers casks as well as formulae; limiting it to
+    /// `--formula` reported every installed cask (e.g. `alacritty`) missing.
     fn is_installed(&self, runner: &dyn Runner, pkg: &str) -> Result<bool, PackageError> {
-        let RunOutcome { status, stdout, .. } =
-            runner.run("brew", &["list", "--formula", "--versions", pkg])?;
+        let RunOutcome { status, stdout, .. } = runner.run("brew", &["list", "--versions", pkg])?;
         Ok(status == 0 && !stdout.trim().is_empty())
     }
 

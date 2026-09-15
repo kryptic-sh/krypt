@@ -43,6 +43,9 @@ patch bumps.
 
 ### Fixed
 
+- `krypt deps` with brew now recognises installed casks (e.g. `alacritty`,
+  `firefox`) as installed. It queried `brew list --formula`, so every cask was
+  reinstalled on each run and never reported as already installed.
 - `krypt deps` runs pacman, apt and dnf directly when `sudo` is not on `PATH`,
   as in Arch, Debian and Ubuntu container images where you are already root. It
   always prefixed `sudo` and failed with "program not found".
