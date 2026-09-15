@@ -1,0 +1,16 @@
+# Fixture for the `distro` CI job (.github/distro/check-deps.sh).
+
+# A small package every supported distro ships under the same name, and which
+# none of their container images has preinstalled.
+[[deps]]
+group  = "present"
+pacman = ["jq"]
+apt    = ["jq"]
+dnf    = ["jq"]
+
+# A package no distro has, so `--check` must fail.
+[[deps]]
+group  = "absent"
+pacman = ["krypt-ci-no-such-package"]
+apt    = ["krypt-ci-no-such-package"]
+dnf    = ["krypt-ci-no-such-package"]

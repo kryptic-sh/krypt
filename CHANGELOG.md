@@ -108,6 +108,11 @@ patch bumps.
   and Intel macOS targets; a break there previously first appeared as skipped
   publish jobs on a release tag. `release` and the publish jobs stay tag-gated.
   Archive names replace `/` in branch refs such as `74/merge`.
+- A `distro` matrix runs the test suite and `krypt deps` inside Arch, Debian,
+  Ubuntu and Fedora containers on the pinned `rust-toolchain.toml` toolchain:
+  manager detection, `--check` accepting a real package and rejecting a missing
+  one, an install as root without sudo, and an idempotent re-run. `build` now
+  waits for it.
 
 ## [0.2.2] - 2026-05-18
 
