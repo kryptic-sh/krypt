@@ -22,14 +22,19 @@ patch bumps.
 - `krypt deps` with winget no longer reports a failure when `winget install`
   exits with `APPINSTALLER_CLI_ERROR_UPDATE_NOT_APPLICABLE` (`0x8A15002B`),
   which winget returns for a package that is already installed and current.
-- The release binary now builds against `h2` 0.4.19 and `rustls` 0.23.45,
-  which fix RUSTSEC-2026-0258 (unbounded empty DATA frames) and
-  RUSTSEC-2026-0285 (TLS 1.3 handshake messages accepted across encryption
-  levels) in the HTTPS transport `krypt init` / `krypt update` use.
+- The release binary now builds against `h2` 0.4.19 and `rustls` 0.23.45, which
+  fix RUSTSEC-2026-0258 (unbounded empty DATA frames) and RUSTSEC-2026-0285 (TLS
+  1.3 handshake messages accepted across encryption levels) in the HTTPS
+  transport `krypt init` / `krypt update` use.
 - `krypt link --platform <os>` (and `relink`) now filters `platform`-gated
   `[[link]]` / `[[template]]` entries by the overridden platform. Previously it
   filtered by the host OS while resolving paths for the override, so previewing
   a Linux deploy from Windows failed on the first `${WIN_APPDATA}` destination.
+- `krypt deps`, `krypt setup`, `krypt paths` and `krypt notify` now read the
+  files listed in `include`, like `link`, `validate` and command dispatch
+  already did. Previously they parsed only the top-level `.krypt.toml`, so
+  `[[deps]]` groups kept in an included file were silently ignored and
+  `krypt deps` installed nothing.
 
 ## [0.2.2] - 2026-05-18
 

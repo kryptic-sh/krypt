@@ -546,7 +546,7 @@ fn cmd_setup(args: SetupArgs) -> Result<ExitCode> {
         }
     };
 
-    let cfg = krypt_core::config::parse_file(&config_path)
+    let cfg = krypt_core::include::load_with_includes(&config_path)
         .map_err(|e| color_eyre::eyre::eyre!("loading config: {e}"))?;
 
     let sections = args.prompts.unwrap_or_default();
@@ -641,7 +641,7 @@ fn cmd_paths(config: PathBuf, no_config: bool) -> Result<ExitCode> {
     let mut resolver = Resolver::new();
 
     if !no_config && config.exists() {
-        match krypt_core::config::parse_file(&config) {
+        match krypt_core::include::load_with_includes(&config) {
             Ok(cfg) => {
                 resolver = resolver.with_overrides(cfg.paths.into_iter().collect());
                 println!("# Overrides loaded from: {}", config.display());
@@ -1032,7 +1032,7 @@ fn cmd_adopt_edits(args: AdoptEditsArgs) -> Result<ExitCode> {
 }
 
 fn cmd_deps(args: DepsArgs) -> Result<ExitCode> {
-    let config = krypt_core::config::parse_file(&args.config)
+    let config = krypt_core::include::load_with_includes(&args.config)
         .map_err(|e| color_eyre::eyre::eyre!("loading config: {e}"))?;
 
     let current_platform = Platform::current().as_str();
@@ -1555,7 +1555,7 @@ fn cmd_notify(args: NotifyArgs) -> Result<ExitCode> {
     let override_name: Option<String> = if args.backend.is_some() {
         args.backend.clone()
     } else if args.config.exists() {
-        krypt_core::config::parse_file(&args.config)
+        krypt_core::include::load_with_includes(&args.config)
             .ok()
             .and_then(|c| c.meta.notify_backend)
     } else {

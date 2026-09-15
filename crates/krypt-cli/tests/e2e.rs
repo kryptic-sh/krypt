@@ -488,6 +488,45 @@ fn test_deps_dry_run() {
     );
 }
 
+/// `krypt deps` reads `[[deps]]` groups from files pulled in by `include`.
+#[test]
+fn test_deps_reads_included_groups() {
+    let env = Env::new();
+    env.create_xdg_dirs();
+    init_bare(&env);
+
+    let rp = repo_path(&env);
+    fs::write(rp.join(".krypt.toml"), "include = [\"deps.toml\"]\n").expect("write .krypt.toml");
+    fs::write(
+        rp.join("deps.toml"),
+        "[[deps]]\ngroup = \"core\"\nwinget = [\"Git.Git\"]\n",
+    )
+    .expect("write deps.toml");
+
+    let output = cmd(&env)
+        .args([
+            "deps",
+            "--config",
+            &rp.join(".krypt.toml").to_string_lossy(),
+            "--manager",
+            "winget",
+            "--dry-run",
+        ])
+        .output()
+        .expect("run deps --dry-run");
+
+    assert!(
+        output.status.success(),
+        "deps --dry-run should exit 0; stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("would install: Git.Git"),
+        "included group should be queued: {stdout}"
+    );
+}
+
 /// `krypt doctor` — after link, text output contains key check labels; `--json`
 /// produces parseable JSON with expected keys.
 #[test]
