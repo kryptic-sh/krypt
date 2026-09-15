@@ -48,6 +48,32 @@ pub trait Runner: Send + Sync {
     /// Run `cmd` with `args`. Returns a `RunOutcome` on success, or an I/O
     /// error if the process could not be spawned at all.
     fn run(&self, cmd: &str, args: &[&str]) -> Result<RunOutcome, std::io::Error>;
+
+    /// Run `cmd` with root privileges: through `sudo` when it is on `PATH`,
+    /// otherwise directly. Containers and minimal installs often run as root
+    /// with no `sudo` at all; a non-root user without `sudo` gets the
+    /// manager's own permission error.
+    fn run_as_root(&self, cmd: &str, args: &[&str]) -> Result<RunOutcome, std::io::Error> {
+        let (program, argv) = root_invocation(which::which("sudo").is_ok(), cmd, args);
+        self.run(program, &argv)
+    }
+}
+
+/// The program and arguments that run `cmd args…` as root: `sudo cmd args…`
+/// when `sudo_on_path`, else `cmd args…` unchanged.
+pub fn root_invocation<'a>(
+    sudo_on_path: bool,
+    cmd: &'a str,
+    args: &[&'a str],
+) -> (&'a str, Vec<&'a str>) {
+    if sudo_on_path {
+        let mut argv = Vec::with_capacity(args.len() + 1);
+        argv.push(cmd);
+        argv.extend_from_slice(args);
+        ("sudo", argv)
+    } else {
+        (cmd, args.to_vec())
+    }
 }
 
 // ─── RealRunner ───────────────────────────────────────────────────────────────
@@ -109,11 +135,13 @@ impl MockResponse {
 
 /// Test runner that records every call and returns scripted responses.
 ///
-/// Calls not registered with [`MockRunner::register`] return exit code 0 with
-/// empty output.
+/// Calls not registered with [`MockRunner::with`] return exit code 0 with
+/// empty output. [`Runner::run_as_root`] behaves as if `sudo` is on `PATH`
+/// unless [`MockRunner::without_sudo`] is used, independent of the host.
 pub struct MockRunner {
     responses: HashMap<CallKey, MockResponse>,
     calls: Mutex<Vec<(String, Vec<String>)>>,
+    sudo_on_path: bool,
 }
 
 impl MockRunner {
@@ -122,7 +150,15 @@ impl MockRunner {
         Self {
             responses: HashMap::new(),
             calls: Mutex::new(Vec::new()),
+            sudo_on_path: true,
         }
+    }
+
+    /// Behave as a host without `sudo`: root commands run directly.
+    #[must_use]
+    pub fn without_sudo(mut self) -> Self {
+        self.sudo_on_path = false;
+        self
     }
 
     /// Register a scripted response. `cmd` and `args` must match exactly.
@@ -160,6 +196,11 @@ impl Runner for MockRunner {
             stderr: resp.stderr,
         })
     }
+
+    fn run_as_root(&self, cmd: &str, args: &[&str]) -> Result<RunOutcome, std::io::Error> {
+        let (program, argv) = root_invocation(self.sudo_on_path, cmd, args);
+        self.run(program, &argv)
+    }
 }
 
 // ─── PackageManager ───────────────────────────────────────────────────────────
@@ -173,6 +214,11 @@ pub trait PackageManager: Send + Sync {
 
     /// Returns `true` when the manager's binary is on `PATH`.
     fn is_available(&self) -> bool;
+
+    /// Returns `true` when `pkg` can be installed from the manager's
+    /// configured sources (repositories, taps, buckets, registry), whether
+    /// or not it is installed. Used by `krypt deps --check`.
+    fn exists(&self, runner: &dyn Runner, pkg: &str) -> Result<bool, PackageError>;
 
     /// Returns `true` when `pkg` is already installed.
     ///

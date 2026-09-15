@@ -14,6 +14,12 @@ impl PackageManager for Scoop {
         which::which("scoop").is_ok()
     }
 
+    /// `scoop info` looks the app up in the added buckets.
+    fn exists(&self, runner: &dyn Runner, pkg: &str) -> Result<bool, PackageError> {
+        let RunOutcome { status, .. } = runner.run("scoop", &["info", pkg])?;
+        Ok(status == 0)
+    }
+
     fn is_installed(&self, runner: &dyn Runner, pkg: &str) -> Result<bool, PackageError> {
         let RunOutcome { status, stdout, .. } = runner.run("scoop", &["list", pkg])?;
         Ok(status == 0 && !stdout.trim().is_empty())

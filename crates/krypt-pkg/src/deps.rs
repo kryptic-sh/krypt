@@ -6,7 +6,8 @@
 
 use thiserror::Error;
 
-use crate::detect::{pick_by_name, pick_default};
+use crate::cargo::{self, Cargo};
+use crate::detect::{detect_all, pick_by_name};
 use crate::manager::{PackageError, PackageManager, Runner};
 
 // ─── DepGroup ─────────────────────────────────────────────────────────────────
@@ -36,7 +37,7 @@ pub struct DepGroup {
 
 // ─── DepsError ────────────────────────────────────────────────────────────────
 
-/// Errors from [`install_deps`].
+/// Errors from [`install_deps`] and [`check_deps`].
 #[derive(Debug, Error)]
 pub enum DepsError {
     /// No package manager could be detected on this platform.
@@ -54,11 +55,12 @@ pub enum DepsError {
 
 // ─── DepsOpts ─────────────────────────────────────────────────────────────────
 
-/// Inputs for [`install_deps`].
+/// Inputs for [`install_deps`] and [`check_deps`].
 pub struct DepsOpts {
     /// Dependency groups, already filtered by platform by the caller.
     pub groups: Vec<DepGroup>,
-    /// Explicit manager override (e.g. `"apt"`). `None` = auto-detect.
+    /// Explicit manager override (e.g. `"apt"`). `None` = every manager
+    /// detected on this platform, in preference order.
     pub manager: Option<String>,
     /// Install only the named group. `None` = all groups.
     pub group_filter: Option<String>,
@@ -66,23 +68,41 @@ pub struct DepsOpts {
     pub dry_run: bool,
 }
 
-// ─── DepsReport ───────────────────────────────────────────────────────────────
+// ─── Reports ──────────────────────────────────────────────────────────────────
 
 /// Summary of a [`install_deps`] run.
+///
+/// Package entries are reported as written in the config, so a crate routed
+/// to cargo appears as `cargo:<crate>`.
 pub struct DepsReport {
-    /// Name of the manager that was (or would have been) used.
-    pub manager_used: String,
+    /// Managers that handled at least one group, in first-use order; `cargo`
+    /// is listed when a `cargo:` entry was processed.
+    pub managers_used: Vec<String>,
     /// Packages that were installed (or would have been in dry-run).
     pub installed: Vec<String>,
     /// Packages already present — skipped.
     pub already_installed: Vec<String>,
-    /// Groups whose package list was empty for the chosen manager.
+    /// Groups with no packages for any of the candidate managers.
     pub skipped_unavailable: Vec<String>,
     /// Packages that failed to install: `(package, error_message)`.
     pub failed: Vec<(String, String)>,
 }
 
-// ─── helpers ──────────────────────────────────────────────────────────────────
+/// Summary of a [`check_deps`] run.
+pub struct CheckReport {
+    /// Managers asked about at least one package, in first-use order.
+    pub managers_used: Vec<String>,
+    /// Packages the manager can install.
+    pub found: Vec<String>,
+    /// Packages the manager does not know.
+    pub missing: Vec<String>,
+    /// Groups with no packages for any of the candidate managers.
+    pub skipped_unavailable: Vec<String>,
+    /// Packages whose lookup itself failed: `(package, error_message)`.
+    pub failed: Vec<(String, String)>,
+}
+
+// ─── Planning ─────────────────────────────────────────────────────────────────
 
 /// Extract the package list for `manager_name` from a dep group.
 fn packages_for<'a>(group: &'a DepGroup, manager_name: &str) -> &'a [String] {
@@ -97,25 +117,41 @@ fn packages_for<'a>(group: &'a DepGroup, manager_name: &str) -> &'a [String] {
     }
 }
 
-// ─── install_deps ─────────────────────────────────────────────────────────────
+/// The managers a run may use: the `--manager` override alone, or every
+/// manager detected on this platform in preference order.
+fn candidate_managers(opts: &DepsOpts) -> Result<Vec<Box<dyn PackageManager>>, DepsError> {
+    match &opts.manager {
+        Some(name) => pick_by_name(name)
+            .map(|m| vec![m])
+            .ok_or_else(|| DepsError::UnknownManager(name.clone())),
+        None => {
+            let detected = detect_all();
+            if detected.is_empty() {
+                Err(DepsError::NoManagerDetected)
+            } else {
+                Ok(detected)
+            }
+        }
+    }
+}
 
-/// Install dependency groups according to the options.
-///
-/// Groups should already be filtered by platform before calling this function.
-pub fn install_deps(opts: &DepsOpts, runner: &dyn Runner) -> Result<DepsReport, DepsError> {
-    let manager: Box<dyn PackageManager> = match &opts.manager {
-        Some(name) => pick_by_name(name).ok_or_else(|| DepsError::UnknownManager(name.clone()))?,
-        None => pick_default().ok_or(DepsError::NoManagerDetected)?,
-    };
+/// One group's packages, split between the manager that owns the group's
+/// list and cargo. Each entry is `(as written, name passed to the manager)`.
+struct GroupPlan<'a> {
+    manager: &'a dyn PackageManager,
+    native: Vec<(&'a str, &'a str)>,
+    cargo: Vec<(&'a str, &'a str)>,
+}
 
-    let manager_name = manager.name().to_owned();
-    let mut report = DepsReport {
-        manager_used: manager_name.clone(),
-        installed: Vec::new(),
-        already_installed: Vec::new(),
-        skipped_unavailable: Vec::new(),
-        failed: Vec::new(),
-    };
+/// The groups `opts` selects, each assigned to the first candidate manager
+/// that lists packages for it. Groups no candidate lists packages for are
+/// returned by name.
+fn plan_groups<'a>(
+    opts: &'a DepsOpts,
+    candidates: &'a [Box<dyn PackageManager>],
+) -> (Vec<GroupPlan<'a>>, Vec<String>) {
+    let mut plans = Vec::new();
+    let mut unavailable = Vec::new();
 
     for group in &opts.groups {
         if opts
@@ -126,44 +162,204 @@ pub fn install_deps(opts: &DepsOpts, runner: &dyn Runner) -> Result<DepsReport, 
             continue;
         }
 
-        let pkgs = packages_for(group, &manager_name);
-        if pkgs.is_empty() {
-            report.skipped_unavailable.push(group.group.clone());
+        let Some((manager, pkgs)) = candidates.iter().find_map(|m| {
+            let pkgs = packages_for(group, m.name());
+            (!pkgs.is_empty()).then_some((m.as_ref(), pkgs))
+        }) else {
+            unavailable.push(group.group.clone());
             continue;
-        }
+        };
 
-        let mut to_install: Vec<String> = Vec::new();
-        if opts.dry_run {
-            // Skip is_installed check in dry-run — assume all packages need installing.
-            to_install.extend_from_slice(pkgs);
-        } else {
-            for pkg in pkgs {
-                match manager.is_installed(runner, pkg) {
-                    Ok(true) => report.already_installed.push(pkg.clone()),
-                    Ok(false) => to_install.push(pkg.clone()),
-                    Err(e) => report.failed.push((pkg.clone(), e.to_string())),
-                }
+        let mut plan = GroupPlan {
+            manager,
+            native: Vec::new(),
+            cargo: Vec::new(),
+        };
+        for entry in pkgs {
+            match entry.strip_prefix(cargo::PREFIX) {
+                Some(krate) => plan.cargo.push((entry.as_str(), krate)),
+                None => plan.native.push((entry.as_str(), entry.as_str())),
             }
         }
+        plans.push(plan);
+    }
 
-        if to_install.is_empty() {
-            continue;
-        }
+    (plans, unavailable)
+}
 
-        if opts.dry_run {
-            report.installed.extend(to_install);
-        } else {
-            match manager.install(runner, &to_install) {
-                Ok(()) => report.installed.extend(to_install),
+fn note_manager(used: &mut Vec<String>, manager: &dyn PackageManager) {
+    if !used.iter().any(|m| m == manager.name()) {
+        used.push(manager.name().to_owned());
+    }
+}
+
+/// The plan's native entries with its manager, then its cargo entries with
+/// [`Cargo`], skipping whichever side is empty.
+fn sources<'p, 'a>(
+    plan: &'p GroupPlan<'a>,
+) -> impl Iterator<Item = (&'a dyn PackageManager, &'p [(&'a str, &'a str)])> {
+    [
+        (plan.manager, plan.native.as_slice()),
+        (&Cargo as &dyn PackageManager, plan.cargo.as_slice()),
+    ]
+    .into_iter()
+    .filter(|(_, entries)| !entries.is_empty())
+}
+
+// ─── install_deps ─────────────────────────────────────────────────────────────
+
+/// Install dependency groups according to the options.
+///
+/// Each group goes to the first candidate manager (see [`DepsOpts::manager`])
+/// with packages listed for it, so on Windows a group listed only for winget
+/// still installs when scoop is also present. Entries written `cargo:<crate>`
+/// are installed with `cargo install` instead of the manager.
+///
+/// Groups should already be filtered by platform before calling this function.
+pub fn install_deps(opts: &DepsOpts, runner: &dyn Runner) -> Result<DepsReport, DepsError> {
+    let candidates = candidate_managers(opts)?;
+    let (plans, skipped_unavailable) = plan_groups(opts, &candidates);
+    let mut report = DepsReport {
+        managers_used: Vec::new(),
+        installed: Vec::new(),
+        already_installed: Vec::new(),
+        skipped_unavailable,
+        failed: Vec::new(),
+    };
+
+    for plan in &plans {
+        for (manager, entries) in sources(plan) {
+            note_manager(&mut report.managers_used, manager);
+
+            if opts.dry_run {
+                // Skip is_installed in dry-run — assume everything needs installing.
+                report
+                    .installed
+                    .extend(entries.iter().map(|(written, _)| (*written).to_owned()));
+                continue;
+            }
+
+            let mut to_install: Vec<(&str, &str)> = Vec::new();
+            for &(written, name) in entries {
+                match manager.is_installed(runner, name) {
+                    Ok(true) => report.already_installed.push(written.to_owned()),
+                    Ok(false) => to_install.push((written, name)),
+                    Err(e) => report.failed.push((written.to_owned(), e.to_string())),
+                }
+            }
+            if to_install.is_empty() {
+                continue;
+            }
+
+            let names: Vec<String> = to_install.iter().map(|(_, n)| (*n).to_owned()).collect();
+            match manager.install(runner, &names) {
+                Ok(()) => report
+                    .installed
+                    .extend(to_install.iter().map(|(w, _)| (*w).to_owned())),
                 Err(e) => {
                     let msg = e.to_string();
-                    for pkg in to_install {
-                        report.failed.push((pkg, msg.clone()));
-                    }
+                    report.failed.extend(
+                        to_install
+                            .iter()
+                            .map(|(w, _)| ((*w).to_owned(), msg.clone())),
+                    );
                 }
             }
         }
     }
 
     Ok(report)
+}
+
+// ─── check_deps ───────────────────────────────────────────────────────────────
+
+/// Ask each package's manager whether it can install the package, without
+/// installing anything. Groups and managers are chosen as in [`install_deps`];
+/// `opts.dry_run` is ignored.
+pub fn check_deps(opts: &DepsOpts, runner: &dyn Runner) -> Result<CheckReport, DepsError> {
+    let candidates = candidate_managers(opts)?;
+    let (plans, skipped_unavailable) = plan_groups(opts, &candidates);
+    let mut report = CheckReport {
+        managers_used: Vec::new(),
+        found: Vec::new(),
+        missing: Vec::new(),
+        skipped_unavailable,
+        failed: Vec::new(),
+    };
+
+    for plan in &plans {
+        for (manager, entries) in sources(plan) {
+            note_manager(&mut report.managers_used, manager);
+            for &(written, name) in entries {
+                match manager.exists(runner, name) {
+                    Ok(true) => report.found.push(written.to_owned()),
+                    Ok(false) => report.missing.push(written.to_owned()),
+                    Err(e) => report.failed.push((written.to_owned(), e.to_string())),
+                }
+            }
+        }
+    }
+
+    Ok(report)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::scoop::Scoop;
+    use crate::winget::Winget;
+
+    fn group(name: &str, scoop: &[&str], winget: &[&str]) -> DepGroup {
+        DepGroup {
+            group: name.into(),
+            scoop: scoop.iter().map(|p| (*p).to_owned()).collect(),
+            winget: winget.iter().map(|p| (*p).to_owned()).collect(),
+            ..Default::default()
+        }
+    }
+
+    // Planning takes the candidates as given, so the fallback is checked the
+    // same way on every host.
+    #[test]
+    fn each_group_goes_to_the_first_candidate_listing_packages() {
+        let opts = DepsOpts {
+            groups: vec![
+                group("both", &["git"], &["Git.Git"]),
+                group("winget-only", &[], &["Neovim.Neovim"]),
+                group("neither", &[], &[]),
+            ],
+            manager: None,
+            group_filter: None,
+            dry_run: true,
+        };
+        let candidates: Vec<Box<dyn PackageManager>> = vec![Box::new(Scoop), Box::new(Winget)];
+
+        let (plans, unavailable) = plan_groups(&opts, &candidates);
+        let chosen: Vec<&str> = plans.iter().map(|p| p.manager.name()).collect();
+        assert_eq!(chosen, ["scoop", "winget"]);
+        assert_eq!(plans[1].native, [("Neovim.Neovim", "Neovim.Neovim")]);
+        assert_eq!(unavailable, ["neither"]);
+    }
+
+    #[test]
+    fn cargo_entries_are_split_from_the_managers_own() {
+        let opts = DepsOpts {
+            groups: vec![group(
+                "tools",
+                &[],
+                &["BurntSushi.ripgrep.MSVC", "cargo:hjkl"],
+            )],
+            manager: None,
+            group_filter: None,
+            dry_run: true,
+        };
+        let candidates: Vec<Box<dyn PackageManager>> = vec![Box::new(Winget)];
+
+        let (plans, _) = plan_groups(&opts, &candidates);
+        assert_eq!(
+            plans[0].native,
+            [("BurntSushi.ripgrep.MSVC", "BurntSushi.ripgrep.MSVC")]
+        );
+        assert_eq!(plans[0].cargo, [("cargo:hjkl", "hjkl")]);
+    }
 }

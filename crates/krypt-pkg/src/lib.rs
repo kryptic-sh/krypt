@@ -19,6 +19,7 @@
 
 pub mod apt;
 pub mod brew;
+pub mod cargo;
 pub mod deps;
 pub mod detect;
 pub mod dnf;

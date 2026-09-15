@@ -2232,6 +2232,7 @@ name = "krypt-pkg"
 version = "0.2.2"
 dependencies = [
  "krypt-platform",
+ "serde_json",
  "thiserror",
  "which",
 ]

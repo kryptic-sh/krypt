@@ -149,7 +149,7 @@ Four-crate Cargo workspace:
 | ---------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `krypt-cli`      | Binary (`krypt`) — clap dispatch, thin                                                                                                                |
 | `krypt-core`     | Engine: config, paths, include, copy, manifest, deploy, tool_config, init, update, adopt, doctor, setup, runner, predicate, notify, dispatch, battery |
-| `krypt-pkg`      | Package manager abstraction (pacman, apt, dnf, brew, scoop, winget)                                                                                   |
+| `krypt-pkg`      | Package manager abstraction (pacman, apt, dnf, brew, scoop, winget, plus `cargo install` for `cargo:` entries)                                        |
 | `krypt-platform` | Placeholder for cfg-gated OS abstractions — currently exposes only a version constant                                                                 |
 
 ## Contributing

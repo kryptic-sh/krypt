@@ -14,14 +14,38 @@ patch bumps.
   e.g. `platform = ["linux", "macos"]`, so an entry shared by several OSes no
   longer has to be repeated once per OS. A single string still works; an empty
   list is rejected at parse time.
+- `cargo:<crate>` entries in any `[[deps]]` manager list (e.g.
+  `apt = ["curl", "cargo:hjkl"]`) are installed with `cargo install --locked` on
+  that manager's systems, so a Rust tool missing from a distro's repositories
+  can still be listed per manager.
+- `krypt deps --check` asks each package's manager whether it can install the
+  package (`pacman -Si` then the AUR RPC, a simulated `apt-get install`,
+  `dnf repoquery --whatprovides`, `brew info`, `scoop info`, `winget show`,
+  `cargo info`) and exits 1 when any is unknown, without installing anything.
+
+### Changed
+
+- `krypt deps` installs each group with the first detected manager that lists
+  packages for it, instead of using only the first detected manager for every
+  group. On Windows with scoop installed, groups listed only for winget were
+  skipped as "no packages for this manager"; they now install through winget.
+  `--manager` still restricts the run to one manager. The `manager:` line lists
+  every manager that was used.
 
 ### Breaking
 
 - `krypt_core::config::{Link, Template, Command}::platform` and
   `krypt_core::dispatch::DispatchListEntry::platform` are now
   `Option<Platforms>` instead of `Option<String>`.
+- `krypt_pkg::manager::PackageManager` has a new required method `exists`, and
+  `krypt_pkg::deps::DepsReport::manager_used: String` is now
+  `managers_used: Vec<String>`.
 
 ### Fixed
+
+- `krypt deps` runs pacman, apt and dnf directly when `sudo` is not on `PATH`,
+  as in Arch, Debian and Ubuntu container images where you are already root. It
+  always prefixed `sudo` and failed with "program not found".
 
 - `krypt setup` now resolves `[[template]]` entries the way `krypt link` does. A
   template's `src` is read from the repo instead of the current directory, so a

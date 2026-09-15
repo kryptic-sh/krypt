@@ -14,6 +14,12 @@ impl PackageManager for Brew {
         which::which("brew").is_ok()
     }
 
+    /// `brew info` resolves formulae and casks, including `user/tap/name`.
+    fn exists(&self, runner: &dyn Runner, pkg: &str) -> Result<bool, PackageError> {
+        let RunOutcome { status, .. } = runner.run("brew", &["info", pkg])?;
+        Ok(status == 0)
+    }
+
     fn is_installed(&self, runner: &dyn Runner, pkg: &str) -> Result<bool, PackageError> {
         let RunOutcome { status, stdout, .. } =
             runner.run("brew", &["list", "--formula", "--versions", pkg])?;

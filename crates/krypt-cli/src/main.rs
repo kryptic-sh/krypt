@@ -24,7 +24,7 @@ use krypt_core::runner::Notifier as _;
 use krypt_core::setup::{RealGitConfig, RealPrompter, SetupError, SetupOpts, YesPrompter};
 use krypt_core::tool_config::ToolConfig;
 use krypt_core::update::{HookSummary, UpdateError, UpdateOpts, update};
-use krypt_pkg::deps::{DepsError, DepsOpts, install_deps};
+use krypt_pkg::deps::{DepsError, DepsOpts, check_deps, install_deps};
 use krypt_pkg::manager::RealRunner;
 
 #[derive(Copy, Clone, Debug, ValueEnum)]
@@ -175,10 +175,13 @@ enum Command {
 
     /// Install packages listed in `[[deps]]` using the appropriate package manager.
     ///
-    /// Auto-detects the right manager for the current OS. Use `--manager` to
-    /// override. Groups are filtered by `required_platforms`; use `--group` to
-    /// target a single group. Use `--dry-run` to see what would be installed
-    /// without touching the system.
+    /// Each group is installed by the first manager detected on this OS that
+    /// lists packages for it (Windows: scoop, then winget). Use `--manager` to
+    /// allow only one. Entries written `cargo:<crate>` are built with
+    /// `cargo install --locked` instead. Groups are filtered by
+    /// `required_platforms`; use `--group` to target a single group. Use
+    /// `--dry-run` to see what would be installed without touching the system,
+    /// or `--check` to ask each manager whether it can install every package.
     Deps(DepsArgs),
 
     /// Send a desktop notification.
@@ -361,6 +364,13 @@ struct DepsArgs {
     /// Print what would be installed without touching the system.
     #[arg(long)]
     dry_run: bool,
+
+    /// Install nothing; ask each package's manager whether it can install it,
+    /// and exit 1 if any package is unknown. Needs up-to-date package lists
+    /// (e.g. `apt-get update`, `pacman -Sy`). Arch packages missing from the
+    /// sync databases are looked up in the AUR.
+    #[arg(long, conflicts_with = "dry_run")]
+    check: bool,
 }
 
 #[derive(clap::Args, Debug)]
@@ -1073,24 +1083,56 @@ fn cmd_deps(args: DepsArgs) -> Result<ExitCode> {
     };
     let runner = RealRunner;
 
-    let report = match install_deps(&opts, &runner) {
-        Ok(r) => r,
-        Err(DepsError::NoManagerDetected) => {
+    let deps_error = |e: DepsError| match e {
+        DepsError::NoManagerDetected => {
             eprintln!("error: no package manager detected; install one or use --manager <name>");
-            return Ok(ExitCode::from(2));
+            ExitCode::from(2)
         }
-        Err(DepsError::UnknownManager(name)) => {
+        DepsError::UnknownManager(name) => {
             eprintln!("error: unknown package manager '{name}'");
-            return Ok(ExitCode::from(2));
+            ExitCode::from(2)
         }
-        Err(e) => {
+        e => {
             eprintln!("error: {e}");
-            return Ok(ExitCode::from(1));
+            ExitCode::from(1)
         }
     };
 
+    if args.check {
+        let report = match check_deps(&opts, &runner) {
+            Ok(r) => r,
+            Err(e) => return Ok(deps_error(e)),
+        };
+        println!("manager: {} (check)", report.managers_used.join(", "));
+        if !report.found.is_empty() {
+            println!("found: {}", report.found.join(", "));
+        }
+        if !report.skipped_unavailable.is_empty() {
+            println!(
+                "skipped (no packages for this manager): {}",
+                report.skipped_unavailable.join(", ")
+            );
+        }
+        for pkg in &report.missing {
+            eprintln!("missing: {pkg}");
+        }
+        for (pkg, err) in &report.failed {
+            eprintln!("failed: {pkg}: {err}");
+        }
+        return Ok(if report.missing.is_empty() && report.failed.is_empty() {
+            ExitCode::SUCCESS
+        } else {
+            ExitCode::from(1)
+        });
+    }
+
+    let report = match install_deps(&opts, &runner) {
+        Ok(r) => r,
+        Err(e) => return Ok(deps_error(e)),
+    };
+
     let dry_label = if args.dry_run { " (dry-run)" } else { "" };
-    println!("manager: {}{}", report.manager_used, dry_label);
+    println!("manager: {}{}", report.managers_used.join(", "), dry_label);
 
     if !report.already_installed.is_empty() {
         println!("already installed: {}", report.already_installed.join(", "));

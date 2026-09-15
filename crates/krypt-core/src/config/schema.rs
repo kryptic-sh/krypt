@@ -270,6 +270,8 @@ pub struct DepsGroup {
     pub required_platforms: Vec<String>,
 
     /// Packages on each manager. Empty list = unavailable on that manager.
+    /// An entry written `cargo:<crate>` is built with `cargo install` on
+    /// that manager's systems instead of coming from the manager.
     #[serde(default)]
     pub pacman: Vec<String>,
     /// Packages on apt (Debian/Ubuntu).

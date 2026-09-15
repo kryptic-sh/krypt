@@ -164,7 +164,25 @@ pacman = ["hyprland", "hyprlock", "hypridle", "waybar", "swaync"]
 ```
 
 `krypt deps` installs missing packages from every group. `required_platforms`
-gates the whole group; per-distro empty arrays gate individual managers.
+gates the whole group; per-distro empty arrays gate individual managers. Each
+group goes to the first manager detected on the machine that lists packages for
+it, so on Windows a winget-only group still installs when scoop is present.
+
+A Rust tool that a distro does not package can be written `cargo:<crate>` in
+that manager's list, and is built with `cargo install --locked` there:
+
+```toml
+[[deps]]
+group  = "editor"
+pacman = ["hjkl-bin"]
+brew   = ["kryptic-sh/tap/hjkl"]
+apt    = ["cargo:hjkl"]
+dnf    = ["cargo:hjkl"]
+```
+
+`krypt deps --check` asks each manager whether it can install every listed
+package, without installing anything — useful in CI to catch a package that was
+renamed or never existed on one distro.
 
 ### 5. Replace interactive wizard with `[prompts.*]`
 

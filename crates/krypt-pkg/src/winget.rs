@@ -26,6 +26,14 @@ impl PackageManager for Winget {
         which::which("winget").is_ok()
     }
 
+    fn exists(&self, runner: &dyn Runner, pkg: &str) -> Result<bool, PackageError> {
+        let RunOutcome { status, .. } = runner.run(
+            "winget",
+            &["show", "--id", pkg, "--exact", "--accept-source-agreements"],
+        )?;
+        Ok(status == 0)
+    }
+
     fn is_installed(&self, runner: &dyn Runner, pkg: &str) -> Result<bool, PackageError> {
         let RunOutcome { status, stdout, .. } =
             runner.run("winget", &["list", "--id", pkg, "--exact"])?;
