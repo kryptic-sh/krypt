@@ -14,8 +14,17 @@ impl PackageManager for Brew {
         which::which("brew").is_ok()
     }
 
-    /// `brew info` resolves formulae and casks, including `user/tap/name`.
+    /// `brew info` resolves formulae and casks. It does not tap a tap that is
+    /// not installed yet, so for a tap-qualified `user/repo/name` the tap is
+    /// added first — as `brew install` would do — and a tap that cannot be
+    /// added means the package is missing.
     fn exists(&self, runner: &dyn Runner, pkg: &str) -> Result<bool, PackageError> {
+        if let Some((tap, _)) = pkg.rsplit_once('/').filter(|(tap, _)| tap.contains('/')) {
+            let RunOutcome { status, .. } = runner.run("brew", &["tap", tap])?;
+            if status != 0 {
+                return Ok(false);
+            }
+        }
         let RunOutcome { status, .. } = runner.run("brew", &["info", pkg])?;
         Ok(status == 0)
     }

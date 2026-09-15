@@ -555,6 +555,36 @@ fn pacman_exists_falls_back_to_the_aur() {
 }
 
 #[test]
+fn brew_exists_taps_a_tap_qualified_name_first() {
+    let runner = MockRunner::new();
+    assert!(Brew.exists(&runner, "kryptic-sh/tap/hjkl").unwrap());
+    assert_eq!(
+        runner.calls(),
+        [
+            (
+                "brew".to_string(),
+                vec!["tap".into(), "kryptic-sh/tap".into()]
+            ),
+            (
+                "brew".to_string(),
+                vec!["info".into(), "kryptic-sh/tap/hjkl".into()]
+            ),
+        ]
+    );
+
+    let no_tap = MockRunner::new().with("brew", &["tap", "nobody/tap"], MockResponse::failure());
+    assert!(!Brew.exists(&no_tap, "nobody/tap/x").unwrap());
+    assert_eq!(no_tap.calls().len(), 1, "no info lookup without the tap");
+
+    let plain = MockRunner::new();
+    assert!(Brew.exists(&plain, "git").unwrap());
+    assert_eq!(
+        plain.calls(),
+        [("brew".to_string(), vec!["info".into(), "git".into()])]
+    );
+}
+
+#[test]
 fn brew_scoop_winget_exists_follow_exit_status() {
     let runner = MockRunner::new()
         .with(

@@ -20,8 +20,9 @@ patch bumps.
   can still be listed per manager.
 - `krypt deps --check` asks each package's manager whether it can install the
   package (`pacman -Si` then the AUR RPC, a simulated `apt-get install`,
-  `dnf repoquery --whatprovides`, `brew info`, `scoop info`, `winget show`,
-  `cargo info`) and exits 1 when any is unknown, without installing anything.
+  `dnf repoquery --whatprovides`, `brew info` (tapping a `user/repo/name` tap
+  first), `scoop info`, `winget show`, `cargo info`) and exits 1 when any is
+  unknown, without installing anything.
 
 ### Changed
 
