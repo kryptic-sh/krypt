@@ -564,6 +564,31 @@ mod tests {
         );
     }
 
+    // ── default_reader picks the host platform's reader ───────────────────────
+
+    #[test]
+    fn default_reader_matches_host_platform() {
+        use crate::paths::Platform;
+
+        let result = default_reader().read();
+        match Platform::current() {
+            // sysfs reader: a CI runner has no battery, a laptop does — but it
+            // must never claim the platform is unsupported.
+            Platform::Linux => assert!(
+                !matches!(result, Err(BatteryError::Unsupported(_))),
+                "linux must use the sysfs reader"
+            ),
+            Platform::Macos => assert!(
+                matches!(result, Err(BatteryError::Unsupported("macos"))),
+                "expected Unsupported(\"macos\")"
+            ),
+            Platform::Windows => assert!(
+                matches!(result, Err(BatteryError::Unsupported("windows"))),
+                "expected Unsupported(\"windows\")"
+            ),
+        }
+    }
+
     // ── MockBatteryReader returns fixed reading ────────────────────────────────
 
     #[test]

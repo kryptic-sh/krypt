@@ -1142,6 +1142,39 @@ fn test_battery_clear_missing_file() {
     );
 }
 
+/// `krypt battery clear` without `--log-file` finds the default log under the
+/// platform's home variable alone — `USERPROFILE` on Windows, `HOME` elsewhere.
+#[test]
+fn test_battery_clear_default_path_uses_platform_home() {
+    let env = Env::new();
+    env.create_xdg_dirs();
+
+    let log_file = env.path(".local/log/bathist.log");
+    fs::create_dir_all(log_file.parent().unwrap()).expect("create log dir");
+    fs::write(
+        &log_file,
+        b"2026-01-01 00:00:00, 1700000000, 80%, Charging\n",
+    )
+    .expect("write log file");
+
+    let other_home_var = if cfg!(windows) { "HOME" } else { "USERPROFILE" };
+    let output = cmd(&env)
+        .env_remove(other_home_var)
+        .args(["battery", "clear"])
+        .output()
+        .expect("run battery clear");
+
+    assert!(
+        output.status.success(),
+        "battery clear should exit 0; stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(
+        !log_file.exists(),
+        "the default log under the platform home should be deleted"
+    );
+}
+
 /// `krypt battery log --log-file <path>` — appends a CSV row; file is created
 /// when absent.
 #[test]

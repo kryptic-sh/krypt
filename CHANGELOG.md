@@ -46,6 +46,10 @@ patch bumps.
   `krypt deps` failed on any machine with scoop installed, since scoop is the
   preferred Windows manager. Programs are now resolved with the same lookup
   (`krypt_platform::process::command`).
+- `krypt battery log` and `krypt battery clear` without `--log-file` now find
+  the default `~/.local/log/bathist.log` through `USERPROFILE` on Windows, like
+  every other `${HOME}` path. They read `$HOME` directly and failed with "HOME
+  environment variable not set" in a normal Windows shell.
 
 ## [0.2.2] - 2026-05-18
 

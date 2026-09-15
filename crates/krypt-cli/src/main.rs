@@ -1410,10 +1410,13 @@ fn cmd_external(args: Vec<String>) -> Result<ExitCode> {
 
 // ─── Battery helpers ──────────────────────────────────────────────────────────
 
-/// Default battery history log path: `~/.local/log/bathist.log`.
+/// Default battery history log path: `${HOME}/.local/log/bathist.log`, with
+/// `${HOME}` resolved per platform (`USERPROFILE` on Windows).
 fn default_battery_log_path() -> Result<PathBuf> {
-    let home = std::env::var("HOME")
-        .map_err(|_| color_eyre::eyre::eyre!("HOME environment variable not set"))?;
+    let r = Resolver::new();
+    let home = r
+        .resolve_var("HOME")
+        .map_err(|e| color_eyre::eyre::eyre!("resolving HOME: {e}"))?;
     Ok(PathBuf::from(home).join(".local/log/bathist.log"))
 }
 
