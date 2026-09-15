@@ -84,6 +84,12 @@ since logging a battery reading only works on Linux.
 
 - **`scoop info` as the `--check` lookup.** `Scoop::exists` treats a non-zero
   exit as "missing"; not run against a real scoop install.
+- **Untrusted Homebrew taps in `--check`.** Homebrew ignores formulae from a tap
+  until `brew trust --tap <tap>`. On Linuxbrew 4.6.20 `brew tap` of an untrusted
+  tap exits 1, so `Brew::exists` reports its packages missing; on the 2026-09-15
+  macOS runner the same check found them, while `brew install` would have
+  skipped them. Not reproduced on a Mac; a trust check (e.g.
+  `brew trust --json`) would make the answer independent of the brew version.
 - **Brew casks as installed.** `Brew::is_installed` runs `brew list --versions`
   for casks too; verified by the dotfiles deps workflow's idempotent `core`
   install on macOS (Alacritty is a cask), not by a krypt test.

@@ -39,7 +39,8 @@ for the current version. Roadmap and open work live in
 
 ```sh
 paru -S krypt-bin                  # Arch (AUR)
-brew install kryptic-sh/tap/krypt  # macOS
+brew trust --tap kryptic-sh/tap    # macOS: Homebrew skips untrusted taps
+brew install kryptic-sh/tap/krypt
 ```
 
 Windows — the release workflow renders a Scoop manifest into
