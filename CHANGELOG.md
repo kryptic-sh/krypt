@@ -26,6 +26,10 @@ patch bumps.
   which fix RUSTSEC-2026-0258 (unbounded empty DATA frames) and
   RUSTSEC-2026-0285 (TLS 1.3 handshake messages accepted across encryption
   levels) in the HTTPS transport `krypt init` / `krypt update` use.
+- `krypt link --platform <os>` (and `relink`) now filters `platform`-gated
+  `[[link]]` / `[[template]]` entries by the overridden platform. Previously it
+  filtered by the host OS while resolving paths for the override, so previewing
+  a Linux deploy from Windows failed on the first `${WIN_APPDATA}` destination.
 
 ## [0.2.2] - 2026-05-18
 

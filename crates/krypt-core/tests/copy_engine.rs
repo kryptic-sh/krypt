@@ -193,9 +193,8 @@ fn platform_filter_skips_other_os() {
     fs::write(repo.path().join("mac"), b"x").unwrap();
     fs::write(repo.path().join("win"), b"x").unwrap();
 
-    // We always run with the test's current platform via the planner's
-    // cfg!() check. Use macos + windows entries — both should be skipped
-    // on Linux CI, leaving zero actions.
+    // The filter follows the resolver's platform, not the host's, so the
+    // Windows-only var in the skipped entry is never resolved on any host.
     let cfg = parse(
         r#"
 [[link]]
@@ -205,28 +204,19 @@ platform = "macos"
 
 [[link]]
 src = "win"
-dst = "${HOME}/win"
+dst = "${WIN_APPDATA}/win"
 platform = "windows"
 "#,
     );
     let resolver = make_resolver(home.path());
     let p = plan(&cfg, repo.path(), &resolver).unwrap();
-    // On CI we run on linux. If you're running the test on macOS or
-    // Windows locally, this test asserts the *opposite* platform's
-    // entry is skipped — still zero kept on a single-platform run.
-    let kept: Vec<_> = p.actions.iter().collect();
-    let current = if cfg!(target_os = "linux") {
-        "linux"
-    } else if cfg!(target_os = "macos") {
-        "macos"
-    } else {
-        "windows"
-    };
-    let expected = match current {
-        "linux" => 0,
-        _ => 1,
-    };
-    assert_eq!(kept.len(), expected);
+    assert!(p.actions.is_empty(), "both foreign entries are skipped");
+
+    let mut env = std::collections::HashMap::new();
+    env.insert("APPDATA".into(), home.path().to_string_lossy().to_string());
+    let windows = Resolver::for_platform(Platform::Windows).with_env(env);
+    let p = plan(&cfg, repo.path(), &windows).unwrap();
+    assert_eq!(p.actions.len(), 1, "the windows entry is kept");
 }
 
 #[test]

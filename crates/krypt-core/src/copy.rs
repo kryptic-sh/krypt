@@ -176,10 +176,11 @@ impl Plan {
 ///
 /// `repo_root` is the directory the dotfiles repo lives in — `src` and
 /// `src_glob` fields are joined under it. `resolver` expands `${VAR}` in
-/// destination paths.
+/// destination paths, and its platform decides which `platform`-gated entries
+/// are kept, so an overridden platform filters and resolves consistently.
 pub fn plan(cfg: &Config, repo_root: &Path, resolver: &Resolver) -> Result<Plan, PlanError> {
     let mut actions = Vec::new();
-    let current_platform = current_platform_str();
+    let current_platform = resolver.platform().as_str();
 
     for link in &cfg.links {
         if !platform_matches(&link.platform, current_platform)? {
@@ -295,16 +296,6 @@ fn glob_prefix_of(pattern: &str) -> PathBuf {
         prefix.push(part.as_os_str());
     }
     prefix
-}
-
-fn current_platform_str() -> &'static str {
-    if cfg!(target_os = "windows") {
-        "windows"
-    } else if cfg!(target_os = "macos") {
-        "macos"
-    } else {
-        "linux"
-    }
 }
 
 fn platform_matches(entry_platform: &Option<String>, current: &str) -> Result<bool, PlanError> {

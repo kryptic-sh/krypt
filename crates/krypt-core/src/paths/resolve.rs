@@ -76,6 +76,11 @@ impl Resolver {
         }
     }
 
+    /// The platform built-in vars are resolved for.
+    pub fn platform(&self) -> Platform {
+        self.platform
+    }
+
     /// Replace the env snapshot used for `${env:...}` lookups. Useful in
     /// tests to avoid leaking the host's environment in.
     pub fn with_env(mut self, env: HashMap<String, String>) -> Self {
