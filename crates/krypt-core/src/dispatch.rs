@@ -293,18 +293,27 @@ pub fn run_in_group_with(
         });
     }
 
-    let cmd: &KryptCommand = cfg
+    let current = Platform::current();
+    let mut candidates = cfg
         .commands
         .iter()
-        .find(|c| c.group == group && c.name == name)
-        .ok_or_else(|| DispatchError::CommandNotFound {
+        .filter(|c| c.group == group && c.name == name)
+        .peekable();
+    let Some(first) = candidates.peek().copied() else {
+        return Err(DispatchError::CommandNotFound {
             group: group.to_owned(),
             name: name.to_owned(),
-            available_in_group: all_in_group.clone(),
-        })?;
+            available_in_group: all_in_group,
+        });
+    };
+
+    // A command may be declared once per OS under the same group and name, so
+    // prefer the entry built for this platform over the first declared one.
+    let cmd = candidates
+        .find(|c| c.platform.as_deref().is_none_or(|p| p == current.as_str()))
+        .unwrap_or(first);
 
     // Platform gate.
-    let current = Platform::current();
     if let Some(ref required) = cmd.platform
         && required.as_str() != current.as_str()
     {
@@ -568,6 +577,40 @@ mod tests {
             matches!(err, DispatchError::PlatformMismatch { .. }),
             "expected PlatformMismatch"
         );
+    }
+
+    #[test]
+    fn run_in_group_picks_entry_for_current_platform() {
+        let current = Platform::current();
+        let other = match current {
+            Platform::Linux => "macos",
+            Platform::Macos => "linux",
+            Platform::Windows => "linux",
+        };
+
+        let toml = format!(
+            concat!(
+                "[[command]]\ngroup = \"system\"\nname = \"nproc\"\n",
+                "platform = \"{other}\"\n",
+                "steps = [{{ run = [\"foreign\"] }}]\n\n",
+                "[[command]]\ngroup = \"system\"\nname = \"nproc\"\n",
+                "platform = \"{current}\"\n",
+                "steps = [{{ run = [\"native\"] }}]\n",
+            ),
+            other = other,
+            current = current.as_str(),
+        );
+        let (_dir, path) = write_config(&toml);
+        let o = opts(path);
+
+        let process = MockProcessExec::new([ok_result("")]);
+        let notifier = MockNotifier::default();
+        let mut prompter = MockPrompter::default();
+
+        let report =
+            run_in_group_with("system", "nproc", &o, &process, &notifier, &mut prompter).unwrap();
+        assert_eq!(report.steps_run, 1);
+        assert_eq!(process.calls.borrow()[0].0, "native");
     }
 
     // ── 4. run_in_group: steps execute, arg forwarding works ─────────────────

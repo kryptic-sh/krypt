@@ -8,6 +8,13 @@ patch bumps.
 
 ## [Unreleased]
 
+### Fixed
+
+- `krypt <group> <name>` now runs the `[[command]]` entry declared for the
+  current platform when the same group and name are repeated per OS.
+  Previously dispatch took the first entry by name and failed with a platform
+  mismatch, so a Windows variant declared after a Linux one was unreachable.
+
 ## [0.2.2] - 2026-05-18
 
 ### Fixed

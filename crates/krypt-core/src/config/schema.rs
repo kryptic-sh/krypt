@@ -263,7 +263,10 @@ pub struct Command {
     #[serde(default)]
     pub description: String,
 
-    /// Optional OS gate.
+    /// Optional OS gate. Same semantics as [`Link::platform`]: to give a
+    /// command a different implementation per OS, repeat the entry under the
+    /// same `group` and `name`, and dispatch runs the one for the current
+    /// platform.
     #[serde(default)]
     pub platform: Option<String>,
 
