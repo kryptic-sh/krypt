@@ -8,6 +8,8 @@ patch bumps.
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-09-19
+
 ### Added
 
 - `platform` on `[[link]]`, `[[template]]` and `[[command]]` accepts a list,
