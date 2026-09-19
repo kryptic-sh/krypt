@@ -29,6 +29,21 @@ fn parse(cfg_str: &str) -> Config {
     parse_str(cfg_str, "test.toml").expect("fixture should parse")
 }
 
+/// Run `git <args>` inside `dir`, panicking on failure. Used to give a
+/// fixture repo a populated index so the planner's tracked-file filter runs
+/// against a real `.git`. Global/system config is neutralized so the host's
+/// gitconfig can't perturb the result.
+fn git(dir: &Path, args: &[&str]) {
+    let status = std::process::Command::new("git")
+        .args(args)
+        .current_dir(dir)
+        .env("GIT_CONFIG_GLOBAL", "/dev/null")
+        .env("GIT_CONFIG_SYSTEM", "/dev/null")
+        .status()
+        .expect("git should be runnable");
+    assert!(status.success(), "git {args:?} failed");
+}
+
 #[test]
 fn simple_link_copies_file_to_resolved_dst() {
     let repo = TempDir::new().unwrap();
@@ -407,4 +422,62 @@ fn missing_source_during_execute_errors() {
     // BTreeMap import is just to silence the unused warning when this
     // file ever drops the `use` above.
     let _: BTreeMap<String, String> = BTreeMap::new();
+}
+
+#[test]
+fn src_glob_deploys_only_tracked_files_in_git_repo() {
+    let repo = TempDir::new().unwrap();
+    let home = TempDir::new().unwrap();
+    let cfgdir = repo.path().join(".config/app");
+    fs::create_dir_all(&cfgdir).unwrap();
+    fs::write(cfgdir.join("config.toml"), b"tracked\n").unwrap();
+    // Stands in for a plugin clone / build artifact left in the working tree.
+    fs::write(cfgdir.join("plugin.log"), b"untracked\n").unwrap();
+
+    git(repo.path(), &["init", "-q"]);
+    git(repo.path(), &["add", ".config/app/config.toml"]);
+
+    let cfg = parse(
+        r#"
+[[link]]
+src_glob = ".config/app/**/*"
+dst = "${HOME}/.config/app/"
+"#,
+    );
+    let resolver = make_resolver(home.path());
+    let p = plan(&cfg, repo.path(), &resolver).unwrap();
+    let dsts: Vec<_> = p.actions.iter().map(|a| a.dst().to_path_buf()).collect();
+    assert_eq!(
+        p.actions.len(),
+        1,
+        "only the tracked file should be planned, got {dsts:?}"
+    );
+    assert!(dsts[0].ends_with("config.toml"), "wrong file: {dsts:?}");
+}
+
+#[test]
+fn src_glob_without_git_repo_matches_working_tree() {
+    // No `.git` → no index → the planner falls back to matching every file,
+    // so plain (non-repo) fixtures keep deploying as before.
+    let repo = TempDir::new().unwrap();
+    let home = TempDir::new().unwrap();
+    let cfgdir = repo.path().join(".config/app");
+    fs::create_dir_all(&cfgdir).unwrap();
+    fs::write(cfgdir.join("a.toml"), b"a\n").unwrap();
+    fs::write(cfgdir.join("b.toml"), b"b\n").unwrap();
+
+    let cfg = parse(
+        r#"
+[[link]]
+src_glob = ".config/app/**/*"
+dst = "${HOME}/.config/app/"
+"#,
+    );
+    let resolver = make_resolver(home.path());
+    let p = plan(&cfg, repo.path(), &resolver).unwrap();
+    assert_eq!(
+        p.actions.len(),
+        2,
+        "non-git fallback should match both files"
+    );
 }

@@ -20,6 +20,7 @@
 //! Still deferred: interactive prompting on an unresolvable conflict. The
 //! CLI's only escape hatch today is `--force`.
 
+use std::collections::HashSet;
 use std::fs::{self, File};
 use std::path::{Component, Path, PathBuf};
 use std::time::SystemTime;
@@ -181,12 +182,15 @@ impl Plan {
 pub fn plan(cfg: &Config, repo_root: &Path, resolver: &Resolver) -> Result<Plan, PlanError> {
     let mut actions = Vec::new();
     let current_platform = resolver.platform().as_str();
+    // When the repo is a git checkout, `src_glob` deploys only tracked files;
+    // `None` (not a git repo) falls back to matching the whole working tree.
+    let tracked = tracked_paths(repo_root);
 
     for link in &cfg.links {
         if !platform_matches(&link.platform, current_platform)? {
             continue;
         }
-        plan_link(link, repo_root, resolver, &mut actions)?;
+        plan_link(link, repo_root, resolver, tracked.as_ref(), &mut actions)?;
     }
     for tmpl in &cfg.templates {
         if !platform_matches(&tmpl.platform, current_platform)? {
@@ -201,6 +205,7 @@ fn plan_link(
     link: &Link,
     repo_root: &Path,
     resolver: &Resolver,
+    tracked: Option<&HashSet<PathBuf>>,
     out: &mut Vec<Action>,
 ) -> Result<(), PlanError> {
     let dst_str = resolver
@@ -236,6 +241,15 @@ fn plan_link(
             if !src_path.is_file() {
                 continue;
             }
+            // In a git repo, deploy only tracked files — skip working-tree
+            // clutter a glob would otherwise sweep in (plugin-manager clones
+            // under a deployed config dir, build artifacts, editor state).
+            if let Some(tracked) = tracked
+                && let Ok(repo_rel) = src_path.strip_prefix(repo_root)
+                && !tracked.contains(repo_rel)
+            {
+                continue;
+            }
             let rel = src_path
                 .strip_prefix(&strip_root)
                 .unwrap_or(&src_path)
@@ -250,6 +264,23 @@ fn plan_link(
     // If a caller hand-builds a Config and bypasses validation, that's their
     // problem — we just skip the entry.
     Ok(())
+}
+
+/// The set of git-tracked paths (repo-relative) for the repo at `repo_root`.
+///
+/// Returns `None` when `repo_root` is not a git repository or its index can't
+/// be read — callers then fall back to matching the whole working tree. Used
+/// by `src_glob` expansion to skip untracked working-tree files (e.g. plugin
+/// clones a deployed config dir accumulates) instead of copying them out.
+fn tracked_paths(repo_root: &Path) -> Option<HashSet<PathBuf>> {
+    let repo = gix::open(repo_root).ok()?;
+    let index = repo.open_index().ok()?;
+    let backing = index.path_backing();
+    let mut set = HashSet::with_capacity(index.entries().len());
+    for entry in index.entries() {
+        set.insert(gix::path::from_bstr(entry.path_in(backing)).into_owned());
+    }
+    Some(set)
 }
 
 fn plan_template(

@@ -33,6 +33,13 @@ patch bumps.
   skipped as "no packages for this manager"; they now install through winget.
   `--manager` still restricts the run to one manager. The `manager:` line lists
   every manager that was used.
+- `src_glob` link entries now deploy only **git-tracked** files when the
+  dotfiles repo is a git checkout. Previously the glob matched the whole working
+  tree, so a deployed config dir that a plugin manager populates in place (TPM
+  under `.config/tmux/plugins/`, fisher under `.config/fish/`, lazy.nvim, build
+  artifacts) had those hundreds of untracked files copied to the destination. A
+  non-git repo still matches the working tree, so non-repo fixtures are
+  unaffected.
 
 ### Breaking
 
