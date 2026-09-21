@@ -259,7 +259,8 @@ struct UpdateArgs {
     #[arg(long)]
     config: Option<PathBuf>,
 
-    /// Don't touch disk; pull the repo but pass dry_run to link.
+    /// Change nothing: skip the fetch and pull (and so the auto-stash), and
+    /// plan `link` and the hooks against the repo as it is checked out now.
     #[arg(long)]
     dry_run: bool,
 
@@ -837,10 +838,17 @@ fn cmd_update(args: UpdateArgs) -> Result<ExitCode> {
             if let Some(warn) = &report.version_warning {
                 eprintln!("{warn}");
             }
-            if report.stashed {
-                println!("stash: auto-stashed (restored after pull)");
+            if opts.dry_run {
+                if report.stashed {
+                    println!("stash: would auto-stash (working tree has changes)");
+                }
+                println!("pull:  skipped (dry-run: nothing fetched)");
+            } else {
+                if report.stashed {
+                    println!("stash: auto-stashed (restored after pull)");
+                }
+                println!("pull:  {}", if report.pulled { "ok" } else { "up to date" });
             }
-            println!("pull:  {}", if report.pulled { "ok" } else { "up to date" });
             println!("link:");
             print_link_report(&report.link, opts.dry_run);
             print_hook_summary(&report.hooks);
@@ -1138,7 +1146,7 @@ fn cmd_deps(args: DepsArgs) -> Result<ExitCode> {
         group_filter: args.group,
         dry_run: args.dry_run,
     };
-    let runner = RealRunner;
+    let runner = RealRunner::default();
 
     let deps_error = |e: DepsError| match e {
         DepsError::NoManagerDetected => {

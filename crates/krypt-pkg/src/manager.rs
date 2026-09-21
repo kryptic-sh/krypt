@@ -60,6 +60,10 @@ pub trait Runner: Send + Sync {
     /// error if the process could not be spawned at all.
     fn run(&self, cmd: &str, args: &[&str]) -> Result<RunOutcome, std::io::Error>;
 
+    /// Pick up directories an install has just added to `PATH`, so later
+    /// [`Runner::run`] calls find the programs it put there.
+    fn refresh_path(&self) -> Result<(), std::io::Error>;
+
     /// Run `cmd` with root privileges: through `sudo` when it is on `PATH`,
     /// otherwise directly. Containers and minimal installs often run as root
     /// with no `sudo` at all; a non-root user without `sudo` gets the
@@ -95,16 +99,75 @@ pub fn root_invocation<'a>(
 ///
 /// stdout and stderr are captured (not inherited) and returned in
 /// [`RunOutcome`] so callers can include them in reports.
-pub struct RealRunner;
+///
+/// Commands see this process's `PATH` until [`Runner::refresh_path`] extends
+/// it, after which they see the extended one.
+#[derive(Default)]
+pub struct RealRunner {
+    path: Mutex<Option<std::ffi::OsString>>,
+}
+
+/// Prints the machine and then the user `PATH` Windows starts new processes
+/// with, one per line. .NET expands `%VAR%` references in them.
+const REGISTRY_PATH_SCRIPT: &str = "[Environment]::GetEnvironmentVariable('Path', 'Machine'); \
+     [Environment]::GetEnvironmentVariable('Path', 'User')";
 
 impl Runner for RealRunner {
     fn run(&self, cmd: &str, args: &[&str]) -> Result<RunOutcome, std::io::Error> {
-        let out = krypt_platform::process::command(cmd).args(args).output()?;
+        let mut command = match &*self.path.lock().unwrap() {
+            Some(path) => krypt_platform::process::command_in_path(cmd, path),
+            None => krypt_platform::process::command(cmd),
+        };
+        let out = command.args(args).output()?;
         Ok(RunOutcome {
             status: out.status.code().unwrap_or(-1),
             stdout: String::from_utf8_lossy(&out.stdout).into_owned(),
             stderr: String::from_utf8_lossy(&out.stderr).into_owned(),
         })
+    }
+
+    /// Windows keeps the `PATH` new processes get in the registry, and an
+    /// installer that extends it (scoop's rustup adds its `.cargo\bin`) does
+    /// not reach processes already running. So this appends the registry's
+    /// directories this process lacks, read through Windows PowerShell, which
+    /// every Windows ships, run from its fixed place under `%SystemRoot%`
+    /// rather than looked up in the `PATH` being repaired. On other systems a
+    /// package manager installs into a directory already on `PATH`, so there
+    /// is nothing to pick up and this does nothing.
+    fn refresh_path(&self) -> Result<(), std::io::Error> {
+        if !cfg!(windows) {
+            return Ok(());
+        }
+        let system_root = std::env::var_os("SystemRoot")
+            .ok_or_else(|| std::io::Error::other("SystemRoot is not set"))?;
+        let powershell = std::path::Path::new(&system_root)
+            .join(r"System32\WindowsPowerShell\v1.0\powershell.exe");
+        let out = self.run(
+            &powershell.to_string_lossy(),
+            &[
+                "-NoProfile",
+                "-NonInteractive",
+                "-Command",
+                REGISTRY_PATH_SCRIPT,
+            ],
+        )?;
+        if out.status != 0 {
+            return Err(std::io::Error::other(format!(
+                "reading PATH from the registry exited with {}: {}",
+                out.status,
+                out.stderr.trim()
+            )));
+        }
+        let mut path = self.path.lock().unwrap();
+        let current = path
+            .clone()
+            .or_else(|| std::env::var_os("PATH"))
+            .unwrap_or_default();
+        *path = Some(krypt_platform::process::append_new_paths(
+            &current,
+            out.stdout.lines(),
+        ));
+        Ok(())
     }
 }
 
@@ -190,6 +253,10 @@ impl MockRunner {
         self
     }
 
+    /// What [`MockRunner::calls`] records for a [`Runner::refresh_path`], so a
+    /// test can see where in the run the refresh happened.
+    pub const REFRESH_PATH: &str = "<refresh_path>";
+
     /// Return a snapshot of all calls made so far.
     pub fn calls(&self) -> Vec<(String, Vec<String>)> {
         self.calls.lock().unwrap().clone()
@@ -222,6 +289,15 @@ impl Runner for MockRunner {
         let (program, argv) = root_invocation(self.sudo_on_path, cmd, args);
         self.run(program, &argv)
     }
+
+    /// Records [`MockRunner::REFRESH_PATH`] and succeeds.
+    fn refresh_path(&self) -> Result<(), std::io::Error> {
+        self.calls
+            .lock()
+            .unwrap()
+            .push((Self::REFRESH_PATH.to_owned(), Vec::new()));
+        Ok(())
+    }
 }
 
 // ─── PackageManager ───────────────────────────────────────────────────────────
@@ -252,4 +328,33 @@ pub trait PackageManager: Send + Sync {
     /// Implementations may batch packages into a single invocation or loop one
     /// at a time (winget).
     fn install(&self, runner: &dyn Runner, packages: &[String]) -> Result<(), PackageError>;
+}
+
+#[cfg(all(test, windows))]
+mod tests {
+    use super::*;
+
+    /// Windows PowerShell's folder is on the machine `PATH` of every Windows
+    /// install but is not `System32` itself, so a runner started with only
+    /// `System32` cannot find `powershell` until the refresh adds it.
+    #[test]
+    fn refresh_path_adds_registry_dirs_to_what_commands_find() {
+        let system32 = std::path::Path::new(&std::env::var_os("SystemRoot").unwrap())
+            .join("System32")
+            .into_os_string();
+        let runner = RealRunner {
+            path: Mutex::new(Some(system32)),
+        };
+        let finds_powershell = || runner.run("where", &["powershell"]).unwrap().status == 0;
+
+        assert!(
+            !finds_powershell(),
+            "System32 alone already finds powershell"
+        );
+        runner.refresh_path().unwrap();
+        assert!(
+            finds_powershell(),
+            "refresh did not add Windows PowerShell's folder"
+        );
+    }
 }

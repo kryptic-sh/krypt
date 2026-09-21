@@ -31,6 +31,47 @@ pub fn command(program: impl AsRef<OsStr>) -> Command {
     }
 }
 
+/// Build a [`Command`] for `program` as [`command`] does, but looked up in
+/// `path` instead of this process's `PATH`, and with `path` as the child's
+/// `PATH`, so what the child runs in turn is found there as well.
+pub fn command_in_path(program: impl AsRef<OsStr>, path: &OsStr) -> Command {
+    let program = program.as_ref();
+    let mut command = if cfg!(windows) {
+        Command::new(resolve_program(program, Some(path.to_owned())))
+    } else {
+        Command::new(program)
+    };
+    command.env("PATH", path);
+    command
+}
+
+/// `current`, a `PATH`-style list, with each directory of `extra` that it does
+/// not already name appended, in order. Directories compare as Windows
+/// compares them there (case and a trailing separator ignored), and exactly
+/// elsewhere.
+pub fn append_new_paths<'a>(current: &OsStr, extra: impl IntoIterator<Item = &'a str>) -> OsString {
+    fn key(dir: &Path) -> String {
+        let dir = dir.to_string_lossy();
+        if cfg!(windows) {
+            dir.trim_end_matches(['\\', '/']).to_lowercase()
+        } else {
+            dir.into_owned()
+        }
+    }
+    let mut dirs: Vec<std::path::PathBuf> = std::env::split_paths(current).collect();
+    let mut seen: std::collections::HashSet<String> = dirs.iter().map(|d| key(d)).collect();
+    for list in extra {
+        for dir in std::env::split_paths(list) {
+            if !dir.as_os_str().is_empty() && seen.insert(key(&dir)) {
+                dirs.push(dir);
+            }
+        }
+    }
+    // Every directory came out of `split_paths`, which strips what
+    // `join_paths` rejects (the separator on Unix, `"` on Windows).
+    std::env::join_paths(dirs).expect("directories from split_paths rejoin")
+}
+
 /// Resolve a bare program name against `paths`, a `PATH`-style list, using
 /// the same rules as `command_exists:` (including `PATHEXT` on Windows).
 ///
@@ -104,6 +145,43 @@ mod tests {
 
         let relative = OsStr::new("./krypt-shim");
         assert_eq!(resolve_program(relative, paths), relative);
+    }
+
+    #[test]
+    fn append_new_paths_adds_only_unseen_dirs_in_order() {
+        let sep = if cfg!(windows) { ";" } else { ":" };
+        let (a, b, c) = if cfg!(windows) {
+            (r"C:\a", r"C:\b", r"C:\c")
+        } else {
+            ("/a", "/b", "/c")
+        };
+        let current = OsString::from([a, b].join(sep));
+        let extra = [c, a, "", b].join(sep);
+        assert_eq!(
+            append_new_paths(&current, [extra.as_str()]),
+            OsString::from([a, b, c].join(sep))
+        );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn append_new_paths_ignores_case_and_trailing_separator_on_windows() {
+        let current = OsString::from(r"C:\Users\Me\scoop\shims");
+        assert_eq!(
+            append_new_paths(&current, [r"c:\users\me\SCOOP\shims\;C:\new"]),
+            OsString::from(r"C:\Users\Me\scoop\shims;C:\new")
+        );
+    }
+
+    #[test]
+    fn command_in_path_finds_and_passes_on_the_given_path() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        write_shim(dir.path(), "krypt-shim-in-path");
+        let out = command_in_path("krypt-shim-in-path", dir.path().as_os_str())
+            .output()
+            .expect("spawn shim from the given path");
+        assert!(out.status.success(), "shim exited with {}", out.status);
+        assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), SHIM_OUTPUT);
     }
 
     #[test]

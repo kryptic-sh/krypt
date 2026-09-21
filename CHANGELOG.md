@@ -60,6 +60,16 @@ patch bumps.
   given several, scoop installs none of them when one is unknown. `scoop list`
   also matched by substring (`git` matched `lazygit`); names now match exactly,
   ignoring case.
+- `krypt update --dry-run` pulled for real: it fetched, auto-stashed a dirty
+  working tree, fast-forwarded the branch and checked the new tree out, and only
+  `link` and the hooks were dry. It now fetches and stashes nothing, says
+  whether the real run would auto-stash (and refuses under `--no-stash`, as the
+  real run would), and plans `link` and the hooks against the current checkout.
+- On Windows, `krypt deps` could not run a program an earlier install in the
+  same run had put on `PATH`: installers add to the `PATH` in the registry,
+  which a running process does not see, so `cargo:` entries failed with "program
+  not found" after scoop installed rustup. After each install krypt now adds the
+  registry `PATH`'s new directories to the `PATH` its later commands get.
 
 ### Breaking
 
@@ -73,6 +83,9 @@ patch bumps.
   fields `templates_skipped` and `unmatched`.
 - `krypt menu` and `krypt <group> <name>` read `.krypt.toml` in the current
   directory before the recorded repo's.
+- `krypt_pkg::manager::Runner` has a new required method `refresh_path`, and
+  `RealRunner` is no longer a unit struct: build it with
+  `RealRunner::default()`.
 
 ## [0.3.0] - 2026-09-19
 

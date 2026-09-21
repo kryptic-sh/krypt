@@ -63,13 +63,6 @@ the MessageBox-versus-toast choice above.
 
 ## Bugs
 
-### `krypt update --dry-run` auto-stashes
-
-Seen on Windows: `krypt update --dry-run` in a dotfiles checkout with local
-changes failed with `auto-stash push failed: ...`, so the dry run was about to
-stash. `--dry-run` is documented as "show plan, change nothing". Not traced in
-`update` yet.
-
 ### Auto-stash fails on git symlinks checked out as files
 
 The same run failed reading `.claude-work/CLAUDE.md`, a symlink in git that Git
@@ -79,14 +72,15 @@ so `krypt update` cannot stash in such a repo on Windows. The mxaddict dotfiles
 are dropping their symlinks, which hides this there; any other repo with
 symlinks still hits it.
 
-### Programs installed mid-run are not on krypt's `PATH`
+### `file://` clones need `git-upload-pack` on `PATH`
 
-Scoop and winget packages that add a directory to the user `PATH` (`mingw`,
-`rustup`'s `~/.cargo/bin`) change the registry, not the running process, so a
-later step in the same `krypt deps` — a `cargo:` entry after `rustup` — fails
-with `program not found`. Scoop's shims avoid this for most apps. Options:
-re-read the user and machine `PATH` from the registry after each Windows
-install, or document running `krypt deps` twice.
+gix's local transport spawns `git-upload-pack`, so `krypt init <file://...>`
+(and `init::tests::clone_from_local_file_url`) fails with "program not found"
+where only `git` is on `PATH`. Scoop's git is such a case: it shims `git` but
+not `git-upload-pack`, which sits in its `cmd` folder; Git for Windows' own
+installer puts that folder on `PATH`. Seen on a Windows machine after moving
+from winget's git to scoop's. Options: find `git-upload-pack` next to the `git`
+on `PATH` (following a scoop shim), or document it. HTTPS clones are unaffected.
 
 ## Deferred
 
@@ -116,6 +110,13 @@ since logging a battery reading only works on Linux.
   mocks. No CI job installs scoop, so a scoop release that changes any of it
   goes unnoticed. The `Install failed` filter in `scoop::export` comes from
   reading `scoop-list.ps1`, not from a failed install.
+- **The Windows `PATH` refresh in `krypt deps` has not been seen end to end.**
+  `RealRunner::refresh_path` is tested against the real registry (a runner
+  started with only `System32` finds `powershell` after it), and `install_deps`
+  is tested to refresh between an install and a later `cargo:` entry, but no
+  real run has installed rustup through scoop and then built a `cargo:` entry.
+  The refresh only appends: a directory an install removed from the registry
+  `PATH` stays until krypt exits.
 - **Untrusted Homebrew taps in `--check`.** Homebrew ignores formulae from a tap
   until `brew trust --tap <tap>`. On Linuxbrew 4.6.20 `brew tap` of an untrusted
   tap exits 1, so `Brew::exists` reports its packages missing; on the 2026-09-15

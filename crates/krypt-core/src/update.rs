@@ -273,7 +273,8 @@ pub struct UpdateReport {
     pub hooks: HookSummary,
 
     /// Whether the working tree was auto-stashed before the pull and
-    /// re-applied after.
+    /// re-applied after. Under `dry_run`, whether it would have been: a dry
+    /// run neither fetches nor stashes, so `pulled` is then always `false`.
     pub stashed: bool,
 }
 
@@ -297,7 +298,11 @@ pub fn update(opts: &UpdateOpts) -> Result<UpdateReport, UpdateError> {
         .clone()
         .unwrap_or_else(|| repo_path.join(".krypt.toml"));
 
-    let (pulled, stashed) = gix_ff_pull(repo_path, opts.no_stash)?;
+    let (pulled, stashed) = if opts.dry_run {
+        (false, dry_run_pull(repo_path, opts.no_stash)?)
+    } else {
+        gix_ff_pull(repo_path, opts.no_stash)?
+    };
 
     let krypt_cfg = crate::include::load_with_includes(&config_path).ok();
 
@@ -508,15 +513,8 @@ pub(crate) fn run_post_update_hooks_with_exec(
 /// 4. Advance the local branch ref and check out the new tree.
 /// 5. Pop the stash if one was created.
 fn gix_ff_pull(repo_path: &Path, no_stash: bool) -> Result<(bool, bool), UpdateError> {
-    let mut repo = gix::open(repo_path).map_err(|e| UpdateError::OpenRepo {
-        path: repo_path.to_path_buf(),
-        source: Box::new(e),
-    })?;
-
     // ── 1. Dirty check / auto-stash ──────────────────────────────────────────
-    let is_dirty = repo
-        .is_dirty()
-        .map_err(|e| UpdateError::GitStatus(Box::new(e)))?;
+    let (mut repo, is_dirty) = open_and_check_dirty(repo_path)?;
 
     let mut stashed = false;
     let mut stash_oid: Option<ObjectId> = None;
@@ -722,6 +720,28 @@ fn gix_ff_pull(repo_path: &Path, no_stash: bool) -> Result<(bool, bool), UpdateE
     }
 
     Ok((true, stashed))
+}
+
+/// The pull step of a dry run: report whether [`gix_ff_pull`] would
+/// auto-stash, and refuse as it would under `no_stash`, without fetching,
+/// stashing, moving the branch or checking anything out.
+fn dry_run_pull(repo_path: &Path, no_stash: bool) -> Result<bool, UpdateError> {
+    let (_, is_dirty) = open_and_check_dirty(repo_path)?;
+    if is_dirty && no_stash {
+        return Err(UpdateError::DirtyWorkingTree);
+    }
+    Ok(is_dirty)
+}
+
+fn open_and_check_dirty(repo_path: &Path) -> Result<(gix::Repository, bool), UpdateError> {
+    let repo = gix::open(repo_path).map_err(|e| UpdateError::OpenRepo {
+        path: repo_path.to_path_buf(),
+        source: Box::new(e),
+    })?;
+    let is_dirty = repo
+        .is_dirty()
+        .map_err(|e| UpdateError::GitStatus(Box::new(e)))?;
+    Ok((repo, is_dirty))
 }
 
 // ─── Stash helpers ───────────────────────────────────────────────────────────
@@ -1252,16 +1272,13 @@ run  = ["echo", "deploying"]
 
     // ── Tests ────────────────────────────────────────────────────────────────
 
-    /// A modified index entry (tree-vs-index mismatch) causes `DirtyWorkingTree`.
+    /// A repo whose `tracked.txt` is modified on disk after its commit, and
+    /// which has no remote.
     ///
     /// gix's `is_dirty()` does not flag *untracked* files (matching git's
     /// `--ignore-untracked` semantics).  For a dotfiles repo this is correct:
     /// a stray untracked file in the repo root should not block a pull.
-    ///
-    /// We trigger a tree-vs-index mismatch by staging a blob that is different
-    /// from what the HEAD commit contains.
-    #[test]
-    fn dirty_tree_always_errors() {
+    fn dirty_repo() -> tempfile::TempDir {
         let local = tempdir().unwrap();
 
         // Commit a tracked file.
@@ -1293,7 +1310,13 @@ run  = ["echo", "deploying"]
         }
         // Now modify the file on disk so it differs from what the index records.
         fs::write(local.path().join("tracked.txt"), b"modified").unwrap();
+        local
+    }
 
+    /// A modified index entry (tree-vs-index mismatch) causes `DirtyWorkingTree`.
+    #[test]
+    fn dirty_tree_always_errors() {
+        let local = dirty_repo();
         let tc_dir = tempdir().unwrap();
         let tc_path = make_tool_config(local.path(), &tc_dir);
         let state = tempdir().unwrap();
@@ -1303,6 +1326,68 @@ run  = ["echo", "deploying"]
             config_path: Some(local.path().join(".krypt.toml")),
             manifest_path: state.path().join("manifest.json"),
             dry_run: false,
+            skip_hooks: false,
+            force: false,
+            no_stash: true,
+        })
+        .unwrap_err();
+
+        assert!(
+            matches!(err, UpdateError::DirtyWorkingTree),
+            "expected DirtyWorkingTree, got {err:?}"
+        );
+    }
+
+    /// `--dry-run` leaves a dirty tree as it is: no stash, no fetch (the repo
+    /// has no remote, which a real pull would fail on), and reports that the
+    /// real run would stash.
+    #[test]
+    fn dry_run_does_not_stash_or_pull() {
+        let local = dirty_repo();
+        fs::write(local.path().join(".krypt.toml"), "").unwrap();
+        let tc_dir = tempdir().unwrap();
+        let tc_path = make_tool_config(local.path(), &tc_dir);
+        let state = tempdir().unwrap();
+
+        let report = update(&UpdateOpts {
+            tool_config_path: tc_path,
+            config_path: Some(local.path().join(".krypt.toml")),
+            manifest_path: state.path().join("manifest.json"),
+            dry_run: true,
+            skip_hooks: false,
+            force: false,
+            no_stash: false,
+        })
+        .expect("dry run");
+
+        assert!(report.stashed, "a dirty tree would be stashed");
+        assert!(!report.pulled);
+        assert_eq!(
+            fs::read(local.path().join("tracked.txt")).unwrap(),
+            b"modified"
+        );
+        let repo = gix::open(local.path()).expect("open");
+        assert!(
+            repo.try_find_reference("refs/stash")
+                .expect("lookup")
+                .is_none(),
+            "dry run created a stash"
+        );
+    }
+
+    /// `--dry-run --no-stash` on a dirty tree refuses, as the real run would.
+    #[test]
+    fn dry_run_no_stash_dirty_errors() {
+        let local = dirty_repo();
+        let tc_dir = tempdir().unwrap();
+        let tc_path = make_tool_config(local.path(), &tc_dir);
+        let state = tempdir().unwrap();
+
+        let err = update(&UpdateOpts {
+            tool_config_path: tc_path,
+            config_path: Some(local.path().join(".krypt.toml")),
+            manifest_path: state.path().join("manifest.json"),
+            dry_run: true,
             skip_hooks: false,
             force: false,
             no_stash: true,

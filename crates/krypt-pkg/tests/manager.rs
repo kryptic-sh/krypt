@@ -963,6 +963,38 @@ fn install_deps_routes_cargo_entries_to_cargo() {
     )));
 }
 
+/// The `cargo:` entries run cargo, which the group's own install may have just
+/// put on PATH (rustup), so the PATH is refreshed between the two.
+#[test]
+fn install_deps_refreshes_path_before_cargo_entries() {
+    let groups = vec![DepGroup {
+        group: "dev".into(),
+        apt: vec!["rustup".into(), "cargo:hjkl".into()],
+        ..Default::default()
+    }];
+    let runner = cargo_list("").with("dpkg", &["-s", "rustup"], MockResponse::failure());
+    let opts = DepsOpts {
+        groups,
+        manager: Some("apt".into()),
+        group_filter: None,
+        dry_run: false,
+    };
+    install_deps(&opts, &runner).unwrap();
+
+    let calls = runner.calls();
+    let position = |cmd: &str, args: &[&str]| {
+        let args: Vec<String> = args.iter().map(|a| (*a).to_owned()).collect();
+        calls
+            .iter()
+            .position(|(c, a)| c == cmd && *a == args)
+            .unwrap_or_else(|| panic!("no call {cmd} {args:?} in {calls:?}"))
+    };
+    let apt = position("sudo", &["apt-get", "install", "-y", "rustup"]);
+    let refresh = position(MockRunner::REFRESH_PATH, &[]);
+    let cargo = position("cargo", &["install", "--locked", "hjkl"]);
+    assert!(apt < refresh && refresh < cargo, "calls: {calls:?}");
+}
+
 #[test]
 fn check_deps_sorts_found_and_missing_without_installing() {
     let groups = vec![DepGroup {

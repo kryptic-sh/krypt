@@ -8,7 +8,7 @@
 //! ```rust,no_run
 //! use krypt_pkg::{detect::pick_default, manager::RealRunner};
 //!
-//! let runner = RealRunner;
+//! let runner = RealRunner::default();
 //! if let Some(mgr) = pick_default() {
 //!     mgr.install(&runner, &["git".to_string()]).unwrap();
 //! }

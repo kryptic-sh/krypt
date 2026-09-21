@@ -259,7 +259,9 @@ fn prepare<'a>(
 /// still installs when scoop is also present. Entries written `cargo:<crate>`
 /// are installed with `cargo install` instead of the manager. Scoop buckets
 /// that `bucket/app` entries name are added before the group installs, except
-/// in dry-run.
+/// in dry-run. After each install the runner's `PATH` is refreshed (see
+/// [`Runner::refresh_path`]), so an entry can use a program an earlier one
+/// installed.
 ///
 /// Groups should already be filtered by platform before calling this function.
 pub fn install_deps(opts: &DepsOpts, runner: &dyn Runner) -> Result<DepsReport, DepsError> {
@@ -339,11 +341,22 @@ pub fn install_deps(opts: &DepsOpts, runner: &dyn Runner) -> Result<DepsReport, 
                     );
                 }
             }
+
+            // A later entry may run what this install put on PATH, as the
+            // `cargo:` entries do with the cargo a rustup install brings.
+            if let Err(e) = runner.refresh_path() {
+                report
+                    .failed
+                    .push((PATH_REFRESH_ENTRY.to_owned(), e.to_string()));
+            }
         }
     }
 
     Ok(report)
 }
+
+/// How a failed [`Runner::refresh_path`] appears in [`DepsReport::failed`].
+pub const PATH_REFRESH_ENTRY: &str = "(PATH refresh)";
 
 // ─── check_deps ───────────────────────────────────────────────────────────────
 
