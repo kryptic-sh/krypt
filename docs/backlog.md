@@ -72,6 +72,14 @@ so `krypt update` cannot stash in such a repo on Windows. The mxaddict dotfiles
 are dropping their symlinks, which hides this there; any other repo with
 symlinks still hits it.
 
+### Nothing forgets a manifest entry whose link was removed
+
+Deleting a `[[link]]` from the config leaves its destination in the manifest, so
+`krypt diff` keeps listing it (`missing` once the file is deleted) and nothing
+removes the deployed copy. Seen in the mxaddict dotfiles after the Windows mpv
+link was dropped. Options: `link` prunes entries no config entry produces any
+more (and offers to delete their files), or a `krypt forget <path>`.
+
 ### `file://` clones need `git-upload-pack` on `PATH`
 
 gix's local transport spawns `git-upload-pack`, so `krypt init <file://...>`
