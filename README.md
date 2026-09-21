@@ -23,8 +23,8 @@ and Windows. Part of the [kryptic.sh](https://kryptic.sh) suite.
 - Interactive first-run wizard via `[prompts.*]` blocks.
 - Cross-distro package install abstraction (pacman, apt, dnf, brew, scoop,
   winget).
-- Post-update lifecycle hooks with `command_exists:` / `platform:` / `env:` /
-  `file_exists:` predicates.
+- Post-update and post-setup lifecycle hooks with `command_exists:` /
+  `platform:` / `env:` / `file_exists:` predicates.
 - Generic `krypt <group> <name>` dispatcher — any `[[command]]` entry in
   `.krypt.toml` is reachable as a subcommand without binary changes.
 

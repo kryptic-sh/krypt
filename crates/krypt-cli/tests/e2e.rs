@@ -971,6 +971,108 @@ fn test_setup_yes() {
     );
 }
 
+/// A `.krypt.toml` whose `post-setup` hook creates `<home>/hooked` and whose
+/// `post-update` hook would create `<home>/not-hooked`, with `prompts` added
+/// as written. `git init` gives the hooks an effect to check on every OS.
+fn hooks_config(env: &Env, prompts: &str) -> PathBuf {
+    init_bare(env);
+    let rp = repo_path(env);
+    let home = toml_path(env.home.path());
+    let toml = format!(
+        concat!(
+            "{prompts}\n",
+            "[[hook]]\n",
+            "name = \"hooked\"\n",
+            "when = \"post-setup\"\n",
+            "run  = [\"git\", \"init\", \"-q\", \"{home}/hooked\"]\n",
+            "\n",
+            "[[hook]]\n",
+            "name = \"not-hooked\"\n",
+            "when = \"post-update\"\n",
+            "run  = [\"git\", \"init\", \"-q\", \"{home}/not-hooked\"]\n",
+        ),
+        prompts = prompts,
+        home = home,
+    );
+    fs::write(rp.join(".krypt.toml"), toml).expect("write .krypt.toml");
+    rp.join(".krypt.toml")
+}
+
+/// `krypt setup` runs the `post-setup` hooks after its prompts, and only
+/// those; `--dry-run` and `--skip-hooks` run none.
+#[test]
+fn test_setup_runs_post_setup_hooks() {
+    let env = Env::new();
+    let prompts = format!(
+        concat!(
+            "[[template]]\n",
+            "src = \"env.template\"\n",
+            "dst = \"{home}/.env_setup_out\"\n",
+            "prompts = [\"myenv\"]\n",
+            "\n",
+            "[prompts.myenv]\n",
+            "writer = \"env\"\n",
+            "fields = [{{ key = \"EDITOR\", prompt = \"Editor\", default = \"nvim\" }}]\n",
+        ),
+        home = toml_path(env.home.path()),
+    );
+    let config = hooks_config(&env, &prompts);
+    fs::write(repo_path(&env).join("env.template"), b"").expect("write env template");
+    let config = config.to_string_lossy().into_owned();
+    let hooked = env.path("hooked");
+
+    for (flag, expected) in [
+        ("--dry-run", "hooks (dry-run):"),
+        ("--skip-hooks", "skipped (--skip-hooks): 1"),
+    ] {
+        let out = cmd(&env)
+            .args(["setup", "--config", &config, "--yes", flag])
+            .output()
+            .expect("run setup");
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        assert!(out.status.success(), "setup {flag} failed: {stdout}");
+        assert!(stdout.contains(expected), "setup {flag} printed: {stdout}");
+        assert!(!hooked.exists(), "setup {flag} ran the hook");
+    }
+
+    let out = cmd(&env)
+        .args(["setup", "--config", &config, "--yes"])
+        .output()
+        .expect("run setup");
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        out.status.success(),
+        "setup failed: {stdout} {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(stdout.contains("ran: 1"), "setup printed: {stdout}");
+    assert!(
+        hooked.join(".git").exists(),
+        "the post-setup hook did not run"
+    );
+    assert!(
+        !env.path("not-hooked").exists(),
+        "setup ran a post-update hook"
+    );
+}
+
+/// A config with hooks but no prompts still gets its `post-setup` hooks run.
+#[test]
+fn test_setup_runs_hooks_without_prompts() {
+    let env = Env::new();
+    let config = hooks_config(&env, "");
+    let out = cmd(&env)
+        .args(["setup", "--config", &config.to_string_lossy(), "--yes"])
+        .output()
+        .expect("run setup");
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(out.status.success(), "setup failed: {stdout}");
+    assert!(
+        env.path("hooked").join(".git").exists(),
+        "the post-setup hook did not run: {stdout}"
+    );
+}
+
 /// `krypt setup` resolves `[[template]]` entries the way `krypt link` does:
 /// `src` under the repo (not the working directory), `[paths]` overrides in
 /// `dst`, and no questions for a section whose templates are all for other

@@ -280,14 +280,26 @@ fn check_hooks(cfg: Option<&crate::config::Config>) -> CheckStatus<String> {
         return CheckStatus::NotApplicable("config not loaded".into());
     };
 
-    // Only post-update hooks today.
-    let post_update: Vec<_> = cfg
+    let (runnable, never_run): (Vec<_>, Vec<_>) = cfg
         .hooks
         .iter()
-        .filter(|h| h.when == "post-update")
-        .collect();
+        .partition(|h| crate::hooks::PHASES.contains(&h.when.as_str()));
 
-    let total = post_update.len();
+    // A `when` no command runs is almost always a typo, and nothing else
+    // would ever say so.
+    if !never_run.is_empty() {
+        let names: Vec<String> = never_run
+            .iter()
+            .map(|h| format!("{:?} ({})", h.name, h.when))
+            .collect();
+        return CheckStatus::Warn(format!(
+            "never run, `when` is not one of {}: {}",
+            crate::hooks::PHASES.join(", "),
+            names.join(", ")
+        ));
+    }
+
+    let total = runnable.len();
 
     if total == 0 {
         return CheckStatus::NotApplicable("none configured".into());
@@ -302,7 +314,7 @@ fn check_hooks(cfg: Option<&crate::config::Config>) -> CheckStatus<String> {
     let mut platform_skipped = 0usize;
     let mut parse_errors = 0usize;
 
-    for hook in &post_update {
+    for hook in &runnable {
         match &hook.r#if {
             None => active += 1,
             Some(pred) => match eval(pred, &env) {
@@ -315,15 +327,15 @@ fn check_hooks(cfg: Option<&crate::config::Config>) -> CheckStatus<String> {
 
     if parse_errors > 0 {
         CheckStatus::Warn(format!(
-            "{total} post-update, {parse_errors} predicate parse error(s) \
-             (run `krypt update --dry-run`)"
+            "{total} hooks, {parse_errors} predicate parse error(s) \
+             (run `krypt update --dry-run` or `krypt setup --dry-run`)"
         ))
     } else if platform_skipped > 0 {
         CheckStatus::Ok(format!(
-            "{total} post-update ({active} active, {platform_skipped} platform-skipped)"
+            "{total} hooks ({active} active, {platform_skipped} platform-skipped)"
         ))
     } else {
-        CheckStatus::Ok(format!("{total} post-update ({active} active)"))
+        CheckStatus::Ok(format!("{total} hooks ({active} active)"))
     }
 }
 
@@ -816,5 +828,32 @@ mod tests {
         let parsed: serde_json::Value = serde_json::from_str(&json).expect("parse back");
         assert!(parsed.is_object());
         assert!(parsed["tool_version"].is_string());
+    }
+
+    // ── 8. Hook phases ───────────────────────────────────────────────────────
+
+    fn hooks_cfg(toml: &str) -> crate::config::Config {
+        toml::from_str(toml).expect("parse config")
+    }
+
+    #[test]
+    fn hooks_of_every_phase_are_counted() {
+        let cfg = hooks_cfg(
+            "[[hook]]\nname = \"a\"\nwhen = \"post-update\"\nrun = [\"true\"]\n\
+             [[hook]]\nname = \"b\"\nwhen = \"post-setup\"\nrun = [\"true\"]\n",
+        );
+        match check_hooks(Some(&cfg)) {
+            CheckStatus::Ok(msg) => assert!(msg.starts_with("2 hooks"), "msg: {msg}"),
+            other => panic!("expected Ok, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn a_hook_no_command_runs_is_a_warning() {
+        let cfg = hooks_cfg("[[hook]]\nname = \"typo\"\nwhen = \"post-setp\"\nrun = [\"true\"]\n");
+        match check_hooks(Some(&cfg)) {
+            CheckStatus::Warn(msg) => assert!(msg.contains("\"typo\" (post-setp)"), "msg: {msg}"),
+            other => panic!("expected Warn, got {other:?}"),
+        }
     }
 }

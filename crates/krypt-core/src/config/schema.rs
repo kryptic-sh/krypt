@@ -45,7 +45,7 @@ pub struct Config {
     #[serde(default, rename = "deps")]
     pub deps: Vec<DepsGroup>,
 
-    /// Lifecycle hooks (post-update plugin updates, etc.).
+    /// Lifecycle hooks (post-update plugin updates, post-setup machine setup).
     #[serde(default, rename = "hook")]
     pub hooks: Vec<Hook>,
 
@@ -307,9 +307,10 @@ pub struct Hook {
     /// Hook name, useful in logs.
     pub name: String,
 
-    /// Phase this hook belongs to. Any string parses, but `post-update` is
-    /// the only value the binary acts on today — `krypt update` runs those
-    /// and ignores every other phase.
+    /// Phase this hook belongs to: `post-update` (run by `krypt update`) or
+    /// `post-setup` (run by `krypt setup`); see [`crate::hooks::PHASES`].
+    /// Any string parses, but a hook naming another phase never runs, which
+    /// `krypt doctor` warns about.
     pub when: String,
 
     /// Optional predicate gating execution. Same syntax as `[[command]]`

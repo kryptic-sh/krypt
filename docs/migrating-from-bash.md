@@ -256,9 +256,10 @@ Predicates available in `if =`:
 - `!negation` — binds tighter than `,` (AND)
 - comma-separated terms AND together; an empty predicate is vacuously true
 
-There is no OR. `post-update` is also the only `when` value the binary acts on
-today — `krypt update` filters hooks with `h.when == "post-update"` and ignores
-every other phase.
+There is no OR. `when` takes two phases: `post-update` runs after
+`krypt update`, and `post-setup` runs after `krypt setup` (for one-off machine
+setup a fresh install needs). A step both should run gets one hook per phase.
+Any other `when` never runs, and `krypt doctor` warns about it.
 
 ### 7. Replace menu launchers with `[[command]]`
 

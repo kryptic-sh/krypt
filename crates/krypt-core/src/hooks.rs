@@ -1,20 +1,27 @@
-//! `[[hook]]` execution, shared by the commands that run hook phases.
+//! `[[hook]]` execution for the phases krypt runs: [`POST_UPDATE`] after
+//! `krypt update`, [`POST_SETUP`] after `krypt setup`.
 
-// The runner returns `UpdateError`, which on Windows exceeds clippy's
-// 128-byte threshold; see the same allowance in `update`.
-#![allow(clippy::result_large_err)]
+use thiserror::Error;
 
 use crate::config::Config;
 use crate::predicate::{DefaultPredicateEnv, default_predicate_evaluator, eval};
-use crate::runner::{Context, Notifier, ProcessExec, Prompter, execute_hook};
-use crate::update::UpdateError;
+use crate::runner::{Context, Notifier, ProcessExec, Prompter, RunnerError, execute_hook};
 
-// ─── Summary ─────────────────────────────────────────────────────────────────
+/// The phase `krypt update` runs, after pulling and linking.
+pub const POST_UPDATE: &str = "post-update";
 
-/// Summary of `post-update` hook execution.
+/// The phase `krypt setup` runs, after writing its templates.
+pub const POST_SETUP: &str = "post-setup";
+
+/// Every phase some command runs. A hook naming another phase never runs.
+pub const PHASES: [&str; 2] = [POST_UPDATE, POST_SETUP];
+
+// ─── Summary & error ─────────────────────────────────────────────────────────
+
+/// Summary of running one phase's hooks.
 #[derive(Debug, Default)]
 pub struct HookSummary {
-    /// Total `post-update` hooks found in the config.
+    /// Hooks of the phase found in the config.
     pub total: usize,
     /// Hooks successfully run to completion.
     pub ran: usize,
@@ -28,56 +35,62 @@ pub struct HookSummary {
     pub dry_run: bool,
 }
 
-// ─── Hook runner helper ───────────────────────────────────────────────────────
+/// A hook failed and its `ignore_failure` was not set.
+#[derive(Debug, Error)]
+#[error("hook {name:?} failed: {source}")]
+pub struct HookError {
+    /// The hook's `name` field.
+    pub name: String,
+    /// The underlying runner error, boxed to keep the error small.
+    #[source]
+    pub source: Box<RunnerError>,
+}
 
-/// Execute `post-update` hooks from `cfg`.
+// ─── Runner ──────────────────────────────────────────────────────────────────
+
+/// Run the hooks of `phase` from `cfg`, notifying through the config's
+/// `[meta] notify_backend`.
 ///
-/// This inner helper accepts injected dependencies so that tests can supply
-/// `MockProcessExec`, `MockNotifier`, and `MockPrompter` without spinning up a
-/// full git repo.  Production calls this with real implementations.
-///
-/// Returns a [`HookSummary`] on success.  If a hook fails and its
-/// `ignore_failure` is `false`, returns `Err(UpdateError::Hook { ... })` and
-/// stops processing further hooks.
-pub(crate) fn run_post_update_hooks_inner(
+/// With `skip`, none run (all count as skipped by flag); with `dry_run`, the
+/// plan is printed and none run. Stops at the first hook that fails without
+/// `ignore_failure`.
+pub fn run(
     cfg: Option<&Config>,
+    phase: &str,
     skip: bool,
     dry_run: bool,
-    notifier: &dyn Notifier,
-    prompter: &mut dyn Prompter,
-) -> Result<HookSummary, UpdateError> {
-    run_post_update_hooks_with_exec(
+) -> Result<HookSummary, HookError> {
+    let notifier =
+        crate::notify::AutoNotifier::new(cfg.and_then(|c| c.meta.notify_backend.as_deref()));
+    run_with_exec(
         cfg,
+        phase,
         skip,
         dry_run,
         &crate::runner::RealProcessExec,
-        notifier,
-        prompter,
+        &notifier,
+        &mut crate::runner::RealPrompter,
     )
 }
 
-/// Same as [`run_post_update_hooks_inner`] but additionally accepts an injected
-/// `ProcessExec` — the seam that test code uses to inject `MockProcessExec`.
-pub(crate) fn run_post_update_hooks_with_exec(
+/// [`run`] with its process runner, notifier and prompter injected — the seam
+/// tests use.
+pub(crate) fn run_with_exec(
     cfg: Option<&Config>,
+    phase: &str,
     skip: bool,
     dry_run: bool,
     process: &dyn ProcessExec,
     notifier: &dyn Notifier,
     prompter: &mut dyn Prompter,
-) -> Result<HookSummary, UpdateError> {
+) -> Result<HookSummary, HookError> {
     let Some(cfg) = cfg else {
         return Ok(HookSummary::default());
     };
 
-    // Only post-update hooks today; future phases will add pre-link / post-link / etc.
-    let post_update_hooks: Vec<_> = cfg
-        .hooks
-        .iter()
-        .filter(|h| h.when == "post-update")
-        .collect();
+    let hooks: Vec<_> = cfg.hooks.iter().filter(|h| h.when == phase).collect();
 
-    let total = post_update_hooks.len();
+    let total = hooks.len();
     let mut summary = HookSummary {
         total,
         dry_run,
@@ -109,7 +122,7 @@ pub(crate) fn run_post_update_hooks_with_exec(
         resolver2 = resolver2.with_overrides(cfg.paths.clone().into_iter().collect());
         let env2 = DefaultPredicateEnv::with_resolver(resolver2);
 
-        for hook in &post_update_hooks {
+        for hook in &hooks {
             let predicate_result = if let Some(ref pred) = hook.r#if {
                 match eval(pred, &env2) {
                     Ok(true) => "ok",
@@ -136,7 +149,7 @@ pub(crate) fn run_post_update_hooks_with_exec(
         stdin: None,
     };
 
-    for hook in &post_update_hooks {
+    for hook in &hooks {
         // Evaluate predicate first (skip silently if false).
         if hook
             .r#if
@@ -153,7 +166,8 @@ pub(crate) fn run_post_update_hooks_with_exec(
                 // The hook's ignore_failure absorbed the error inside the runner.
                 tracing::warn!(
                     hook = %hook.name,
-                    "post-update hook failed (ignore_failure = true) — continuing"
+                    phase,
+                    "hook failed (ignore_failure = true) — continuing"
                 );
                 summary.failed_ignored += 1;
             }
@@ -162,7 +176,7 @@ pub(crate) fn run_post_update_hooks_with_exec(
             }
             Err(e) => {
                 // ignore_failure = false (the runner would have returned Err only then).
-                return Err(UpdateError::Hook {
+                return Err(HookError {
                     name: hook.name.clone(),
                     source: Box::new(e),
                 });
@@ -192,8 +206,9 @@ mod tests {
         let notifier = MockNotifier::default();
         let mut prompter = MockPrompter::default();
 
-        let summary = run_post_update_hooks_with_exec(
+        let summary = run_with_exec(
             Some(&cfg),
+            POST_UPDATE,
             false,
             false,
             &MockProcessExec::new([]),
@@ -233,8 +248,9 @@ run  = ["echo", "hi"]
         let notifier = MockNotifier::default();
         let mut prompter = MockPrompter::default();
 
-        let summary = run_post_update_hooks_with_exec(
+        let summary = run_with_exec(
             Some(&cfg),
+            POST_UPDATE,
             false,
             false,
             &process,
@@ -273,8 +289,9 @@ run   = ["echo", "nope"]
         let notifier = MockNotifier::default();
         let mut prompter = MockPrompter::default();
 
-        let summary = run_post_update_hooks_with_exec(
+        let summary = run_with_exec(
             Some(&cfg),
+            POST_UPDATE,
             false,
             false,
             &process,
@@ -314,8 +331,9 @@ ignore_failure = true
         let notifier = MockNotifier::default();
         let mut prompter = MockPrompter::default();
 
-        let result = run_post_update_hooks_with_exec(
+        let result = run_with_exec(
             Some(&cfg),
+            POST_UPDATE,
             false,
             false,
             &process,
@@ -328,7 +346,7 @@ ignore_failure = true
         assert_eq!(summary.ran, 0);
     }
 
-    // ── 5. Hook fails, ignore_failure = false → Err(UpdateError::Hook) ───────
+    // ── 5. Hook fails, ignore_failure = false → Err(HookError) ───────
 
     #[test]
     fn hook_fails_ignore_failure_false_returns_err() {
@@ -351,8 +369,9 @@ run  = ["bad-cmd"]
         let notifier = MockNotifier::default();
         let mut prompter = MockPrompter::default();
 
-        let err = run_post_update_hooks_with_exec(
+        let err = run_with_exec(
             Some(&cfg),
+            POST_UPDATE,
             false,
             false,
             &process,
@@ -362,8 +381,8 @@ run  = ["bad-cmd"]
         .unwrap_err();
 
         assert!(
-            matches!(&err, UpdateError::Hook { name, .. } if name == "strict"),
-            "expected UpdateError::Hook {{ name: \"strict\", .. }}, got {err:?}"
+            err.name == "strict",
+            "expected the failure of \"strict\", got {err:?}"
         );
     }
 
@@ -389,8 +408,9 @@ run  = ["echo", "two"]
         let notifier = MockNotifier::default();
         let mut prompter = MockPrompter::default();
 
-        let summary = run_post_update_hooks_with_exec(
+        let summary = run_with_exec(
             Some(&cfg),
+            POST_UPDATE,
             true, // skip = true
             false,
             &process,
@@ -423,8 +443,9 @@ run  = ["echo", "deploying"]
         let notifier = MockNotifier::default();
         let mut prompter = MockPrompter::default();
 
-        let summary = run_post_update_hooks_with_exec(
+        let summary = run_with_exec(
             Some(&cfg),
+            POST_UPDATE,
             false,
             true, // dry_run = true
             &process,
@@ -440,5 +461,50 @@ run  = ["echo", "deploying"]
         assert_eq!(summary.failed_ignored, 0);
         // No process spawned.
         assert!(process.calls.borrow().is_empty());
+    }
+
+    // ── 8. Only the requested phase runs ─────────────────────────────────────
+
+    #[test]
+    fn only_hooks_of_the_phase_run() {
+        use crate::runner::ProcessResult;
+
+        let cfg = make_cfg_with_hooks(
+            r#"
+[[hook]]
+name = "after-update"
+when = "post-update"
+run  = ["update-cmd"]
+
+[[hook]]
+name = "after-setup"
+when = "post-setup"
+run  = ["setup-cmd"]
+"#,
+        );
+        let process = MockProcessExec::new([Ok(ProcessResult {
+            status: 0,
+            stdout: String::new(),
+            stderr: String::new(),
+        })]);
+        let notifier = MockNotifier::default();
+        let mut prompter = MockPrompter::default();
+
+        let summary = run_with_exec(
+            Some(&cfg),
+            POST_SETUP,
+            false,
+            false,
+            &process,
+            &notifier,
+            &mut prompter,
+        )
+        .unwrap();
+
+        assert_eq!(summary.total, 1);
+        assert_eq!(summary.ran, 1);
+        let calls = process.calls.borrow();
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].0, "setup-cmd");
     }
 }

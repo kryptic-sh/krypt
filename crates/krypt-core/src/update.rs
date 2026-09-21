@@ -302,20 +302,16 @@ pub fn update(opts: &UpdateOpts) -> Result<UpdateReport, UpdateError> {
         force: opts.force,
     })?;
 
-    // Execute post-update hooks using real production dependencies.
-    let notifier = crate::notify::AutoNotifier::new(
-        krypt_cfg
-            .as_ref()
-            .and_then(|c| c.meta.notify_backend.as_deref()),
-    );
-    let mut prompter = crate::runner::RealPrompter;
-    let hooks_summary = crate::hooks::run_post_update_hooks_inner(
+    let hooks_summary = crate::hooks::run(
         krypt_cfg.as_ref(),
+        crate::hooks::POST_UPDATE,
         opts.skip_hooks,
         opts.dry_run,
-        &notifier,
-        &mut prompter,
-    )?;
+    )
+    .map_err(|e| UpdateError::Hook {
+        name: e.name,
+        source: e.source,
+    })?;
 
     Ok(UpdateReport {
         pulled,

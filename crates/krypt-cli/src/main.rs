@@ -169,7 +169,8 @@ enum Command {
     ///
     /// Reads prompt sections from `.krypt.toml`, asks the user questions, and
     /// writes the collected values to destination files using the section's
-    /// configured writer (gitconfig, hypr_vars, env, generic_template).
+    /// configured writer (gitconfig, hypr_vars, env, generic_template), then
+    /// runs the `[[hook]] when = "post-setup"` hooks.
     Setup(SetupArgs),
 
     /// Install packages listed in `[[deps]]` using the appropriate package manager.
@@ -400,9 +401,14 @@ struct SetupArgs {
     #[arg(long)]
     yes: bool,
 
-    /// Parse and collect values but do not write any destination files.
+    /// Parse and collect values but do not write any destination files, and
+    /// print the post-setup hooks instead of running them.
     #[arg(long)]
     dry_run: bool,
+
+    /// Skip all post-setup hooks.
+    #[arg(long)]
+    skip_hooks: bool,
 }
 
 #[derive(clap::Args, Debug)]
@@ -551,8 +557,8 @@ fn cmd_setup(args: SetupArgs) -> Result<ExitCode> {
         println!("skipping prompt section {name:?}: its templates are for other platforms");
     }
     if sections.is_empty() {
-        println!("nothing to set up on {}", resolver.platform());
-        return Ok(ExitCode::SUCCESS);
+        println!("no prompts to run on {}", resolver.platform());
+        return Ok(run_post_setup_hooks(&cfg, args.skip_hooks, args.dry_run));
     }
 
     let opts = SetupOpts {
@@ -594,7 +600,7 @@ fn cmd_setup(args: SetupArgs) -> Result<ExitCode> {
                     report.skipped_by_requires.join(", ")
                 );
             }
-            Ok(ExitCode::SUCCESS)
+            Ok(run_post_setup_hooks(&cfg, args.skip_hooks, args.dry_run))
         }
         Err(SetupError::UnknownPromptSection(name)) => {
             eprintln!("error: unknown prompt section {name:?}");
@@ -964,6 +970,22 @@ fn print_unlink_report(r: &UnlinkReport, dry_run: bool) {
             "  drifted (kept): {} (re-run with --force to delete)",
             r.drift_skipped
         );
+    }
+}
+
+/// Run the post-setup hooks and print their summary, returning the exit code
+/// `krypt setup` ends with: failure when a hook failed without
+/// `ignore_failure`.
+fn run_post_setup_hooks(cfg: &krypt_core::config::Config, skip: bool, dry_run: bool) -> ExitCode {
+    match krypt_core::hooks::run(Some(cfg), krypt_core::hooks::POST_SETUP, skip, dry_run) {
+        Ok(summary) => {
+            print_hook_summary(&summary);
+            ExitCode::SUCCESS
+        }
+        Err(e) => {
+            eprintln!("error: {e}");
+            ExitCode::from(1)
+        }
     }
 }
 

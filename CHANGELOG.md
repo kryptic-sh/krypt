@@ -8,6 +8,24 @@ patch bumps.
 
 ## [Unreleased]
 
+### Added
+
+- `[[hook]] when = "post-setup"`: `krypt setup` runs these after writing its
+  templates (and when no prompt applies to the platform), for one-off machine
+  setup such as turning on Windows Developer Mode. `krypt setup --skip-hooks`
+  skips them and `krypt setup --dry-run` prints them instead of running them, as
+  the same flags do for `krypt update`'s `post-update` hooks.
+- `krypt_core::hooks`: `run(cfg, phase, skip, dry_run)` runs one phase's hooks,
+  with the phases as `POST_UPDATE` / `POST_SETUP` / `PHASES`, failures as
+  `HookError`, and `HookSummary` (still reachable as
+  `krypt_core::update::HookSummary`).
+
+### Changed
+
+- `krypt doctor` counts the hooks of every phase, not only `post-update`, and
+  warns about a hook whose `when` no command runs (e.g. a typo such as
+  `post-setp`), which was silently never run.
+
 ## [0.4.1] - 2026-09-21
 
 ### Fixed
