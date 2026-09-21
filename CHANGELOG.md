@@ -8,6 +8,8 @@ patch bumps.
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-09-21
+
 ### Added
 
 - Scoop entries in `[[deps]]` can name the bucket they come from, e.g.
