@@ -60,6 +60,7 @@ pub mod copy;
 pub mod deploy;
 pub mod dispatch;
 pub mod doctor;
+pub mod hooks;
 pub mod include;
 pub mod init;
 pub mod manifest;
