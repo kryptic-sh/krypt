@@ -8,6 +8,8 @@ patch bumps.
 
 ## [Unreleased]
 
+## [0.4.2] - 2026-09-21
+
 ### Added
 
 - `[[hook]] when = "post-setup"`: `krypt setup` runs these after writing its
