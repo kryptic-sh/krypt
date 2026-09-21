@@ -8,6 +8,15 @@ patch bumps.
 
 ## [Unreleased]
 
+## [0.4.1] - 2026-09-21
+
+### Fixed
+
+- Nothing changed for users. 0.4.0 was tagged, but a test that failed
+  intermittently on Linux stopped its release pipeline before anything was
+  published, so 0.4.1 is the first release carrying the changes listed under
+  0.4.0.
+
 ## [0.4.0] - 2026-09-21
 
 ### Added
