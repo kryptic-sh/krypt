@@ -79,6 +79,27 @@ so `krypt update` cannot stash in such a repo on Windows. The mxaddict dotfiles
 are dropping their symlinks, which hides this there; any other repo with
 symlinks still hits it.
 
+### `adopt` and `adopt-edits` ignore the tool config's repo path
+
+`cmd_adopt`, `cmd_adopt_edits` (and `cmd_init`) default to
+`default_repo_path()`, which is always `${XDG_CONFIG}/krypt/repo`, while `link`,
+`update` and the other commands read `[repo] path` from
+`${XDG_CONFIG}/krypt/config.toml`. With the repo moved elsewhere (config
+updated), `krypt adopt-edits` would copy drifted files into a fresh
+`~/.config/krypt/repo/` instead of the repo. Seen by reading the code and a
+`--dry-run` against a moved repo; `--repo-path` works around it.
+
+### `adopt-edits` adopts every drifted entry, templates included
+
+`adopt::adopt_edits` copies every `Drifted` manifest entry back to
+`<repo>/<src>` with no filter. A `[[template]]` destination drifts by design
+once `krypt setup` fills it in, so adopting it overwrites the committed template
+with personal values (a `~/.gitconfig.local` identity over
+`.gitconfig.local.template`); a file its tool rewrites (gh's `hosts.yml`) is
+pulled in too. Options: skip `EntryKind::Template` unless asked, and accept
+paths to adopt only those. `--dry-run` also prints "adopted edits for N
+entries", worded as if it had.
+
 ### Programs installed mid-run are not on krypt's `PATH`
 
 Scoop and winget packages that add a directory to the user `PATH` (`mingw`,
