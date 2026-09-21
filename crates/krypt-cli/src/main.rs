@@ -1071,6 +1071,7 @@ fn cmd_deps(args: DepsArgs) -> Result<ExitCode> {
             dnf: g.dnf,
             brew: g.brew,
             scoop: g.scoop,
+            scoop_buckets: g.scoop_buckets,
             winget: g.winget,
         })
         .collect();

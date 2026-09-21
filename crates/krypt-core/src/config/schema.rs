@@ -283,9 +283,18 @@ pub struct DepsGroup {
     /// Packages on brew (macOS).
     #[serde(default)]
     pub brew: Vec<String>,
-    /// Packages on scoop (Windows).
+    /// Packages on scoop (Windows). An entry written `bucket/app` (e.g.
+    /// `extras/alacritty`) comes from that bucket, which `krypt deps` adds
+    /// first.
     #[serde(default)]
     pub scoop: Vec<String>,
+    /// URLs of the scoop buckets named in [`Self::scoop`] that Scoop does not
+    /// know by name, keyed by bucket name, e.g.
+    /// `scoop_buckets = { kryptic-sh = "https://github.com/kryptic-sh/scoop-bucket" }`.
+    /// Buckets `scoop bucket known` lists (`extras`, `nerd-fonts`, ...) need
+    /// no entry.
+    #[serde(default)]
+    pub scoop_buckets: BTreeMap<String, String>,
     /// Packages on winget (Windows).
     #[serde(default)]
     pub winget: Vec<String>,

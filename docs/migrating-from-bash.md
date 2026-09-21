@@ -180,6 +180,17 @@ apt    = ["cargo:hjkl"]
 dnf    = ["cargo:hjkl"]
 ```
 
+A scoop entry can name its bucket as `bucket/app`. `krypt deps` adds the bucket
+first: by name for the buckets `scoop bucket known` lists, or from its URL in
+the group's `scoop_buckets` table for any other:
+
+```toml
+[[deps]]
+group         = "terminal"
+scoop         = ["extras/alacritty", "nerd-fonts/Hack-NF-Mono", "kryptic-sh/pikr"]
+scoop_buckets = { kryptic-sh = "https://github.com/kryptic-sh/scoop-bucket" }
+```
+
 `krypt deps --check` asks each manager whether it can install every listed
 package, without installing anything — useful in CI to catch a package that was
 renamed or never existed on one distro.

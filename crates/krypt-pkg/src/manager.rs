@@ -26,6 +26,17 @@ pub enum PackageError {
         /// Captured stderr from the process.
         stderr: String,
     },
+
+    /// The manager's install command finished, but reading its state back
+    /// shows these packages are still not installed. Raised by managers that
+    /// report success regardless of the outcome (scoop).
+    #[error("not installed: {}; output: {output}", packages.join(", "))]
+    NotInstalled {
+        /// The packages that were asked for and are not installed.
+        packages: Vec<String>,
+        /// Everything the install command printed.
+        output: String,
+    },
 }
 
 // ─── RunOutcome ───────────────────────────────────────────────────────────────
@@ -139,7 +150,7 @@ impl MockResponse {
 /// empty output. [`Runner::run_as_root`] behaves as if `sudo` is on `PATH`
 /// unless [`MockRunner::without_sudo`] is used, independent of the host.
 pub struct MockRunner {
-    responses: HashMap<CallKey, MockResponse>,
+    responses: Mutex<HashMap<CallKey, Vec<MockResponse>>>,
     calls: Mutex<Vec<(String, Vec<String>)>>,
     sudo_on_path: bool,
 }
@@ -148,7 +159,7 @@ impl MockRunner {
     /// Create a new empty mock runner (all calls succeed by default).
     pub fn new() -> Self {
         Self {
-            responses: HashMap::new(),
+            responses: Mutex::new(HashMap::new()),
             calls: Mutex::new(Vec::new()),
             sudo_on_path: true,
         }
@@ -162,10 +173,20 @@ impl MockRunner {
     }
 
     /// Register a scripted response. `cmd` and `args` must match exactly.
+    ///
+    /// Registering the same call again queues another response: each call
+    /// takes the next one in order, and the last one answers every call after
+    /// it, so a command whose output changes (state read before and after an
+    /// install) can be scripted.
     #[must_use]
-    pub fn with(mut self, cmd: &str, args: &[&str], resp: MockResponse) -> Self {
+    pub fn with(self, cmd: &str, args: &[&str], resp: MockResponse) -> Self {
         let key = (cmd.to_owned(), args.iter().map(|s| s.to_string()).collect());
-        self.responses.insert(key, resp);
+        self.responses
+            .lock()
+            .unwrap()
+            .entry(key)
+            .or_default()
+            .push(resp);
         self
     }
 
@@ -185,11 +206,11 @@ impl Runner for MockRunner {
     fn run(&self, cmd: &str, args: &[&str]) -> Result<RunOutcome, std::io::Error> {
         let key: CallKey = (cmd.to_owned(), args.iter().map(|s| s.to_string()).collect());
         self.calls.lock().unwrap().push(key.clone());
-        let resp = self
-            .responses
-            .get(&key)
-            .cloned()
-            .unwrap_or(MockResponse::success());
+        let resp = match self.responses.lock().unwrap().get_mut(&key) {
+            Some(queue) if queue.len() > 1 => queue.remove(0),
+            Some(queue) => queue[0].clone(),
+            None => MockResponse::success(),
+        };
         Ok(RunOutcome {
             status: resp.status,
             stdout: resp.stdout,

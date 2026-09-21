@@ -4,11 +4,14 @@
 //! fields from their config and pass a [`DepGroup`] slice so that `krypt-pkg`
 //! remains free of the `krypt-core` crate dependency.
 
+use std::collections::BTreeMap;
+
 use thiserror::Error;
 
 use crate::cargo::{self, Cargo};
 use crate::detect::{detect_all, pick_by_name};
 use crate::manager::{PackageError, PackageManager, Runner};
+use crate::scoop::{self, Scoop};
 
 // ─── DepGroup ─────────────────────────────────────────────────────────────────
 
@@ -31,6 +34,9 @@ pub struct DepGroup {
     pub brew: Vec<String>,
     /// Packages for the `scoop` manager.
     pub scoop: Vec<String>,
+    /// URLs of scoop buckets that `bucket/app` entries in [`Self::scoop`] name
+    /// and Scoop does not know by name, keyed by bucket name.
+    pub scoop_buckets: BTreeMap<String, String>,
     /// Packages for the `winget` manager.
     pub winget: Vec<String>,
 }
@@ -138,6 +144,7 @@ fn candidate_managers(opts: &DepsOpts) -> Result<Vec<Box<dyn PackageManager>>, D
 /// One group's packages, split between the manager that owns the group's
 /// list and cargo. Each entry is `(as written, name passed to the manager)`.
 struct GroupPlan<'a> {
+    group: &'a DepGroup,
     manager: &'a dyn PackageManager,
     native: Vec<(&'a str, &'a str)>,
     cargo: Vec<(&'a str, &'a str)>,
@@ -171,6 +178,7 @@ fn plan_groups<'a>(
         };
 
         let mut plan = GroupPlan {
+            group,
             manager,
             native: Vec::new(),
             cargo: Vec::new(),
@@ -206,6 +214,42 @@ fn sources<'p, 'a>(
     .filter(|(_, entries)| !entries.is_empty())
 }
 
+/// Entries split into those ready to look up or install and those whose
+/// source could not be set up, the latter as `(as written, reason)`.
+type Prepared<'a> = (Vec<(&'a str, &'a str)>, Vec<(String, String)>);
+
+/// Sets up the sources `manager` needs for `entries` before they are looked
+/// up or installed: for scoop, the buckets that `bucket/app` entries name
+/// (see [`scoop::add_buckets`]). Entries of other managers are all ready.
+fn prepare<'a>(
+    runner: &dyn Runner,
+    plan: &GroupPlan<'_>,
+    manager: &dyn PackageManager,
+    entries: &[(&'a str, &'a str)],
+) -> Result<Prepared<'a>, PackageError> {
+    if manager.name() != Scoop.name() {
+        return Ok((entries.to_vec(), Vec::new()));
+    }
+    let names: Vec<&str> = entries.iter().map(|&(_, name)| name).collect();
+    let missing = scoop::add_buckets(runner, &names, &plan.group.scoop_buckets)?;
+
+    let mut ready = Vec::new();
+    let mut unready = Vec::new();
+    for &(written, name) in entries {
+        match scoop::split_entry(name)
+            .0
+            .filter(|bucket| missing.iter().any(|m| m.eq_ignore_ascii_case(bucket)))
+        {
+            Some(bucket) => unready.push((
+                written.to_owned(),
+                format!("scoop bucket `{bucket}` could not be added"),
+            )),
+            None => ready.push((written, name)),
+        }
+    }
+    Ok((ready, unready))
+}
+
 // ─── install_deps ─────────────────────────────────────────────────────────────
 
 /// Install dependency groups according to the options.
@@ -213,7 +257,9 @@ fn sources<'p, 'a>(
 /// Each group goes to the first candidate manager (see [`DepsOpts::manager`])
 /// with packages listed for it, so on Windows a group listed only for winget
 /// still installs when scoop is also present. Entries written `cargo:<crate>`
-/// are installed with `cargo install` instead of the manager.
+/// are installed with `cargo install` instead of the manager. Scoop buckets
+/// that `bucket/app` entries name are added before the group installs, except
+/// in dry-run.
 ///
 /// Groups should already be filtered by platform before calling this function.
 pub fn install_deps(opts: &DepsOpts, runner: &dyn Runner) -> Result<DepsReport, DepsError> {
@@ -239,8 +285,22 @@ pub fn install_deps(opts: &DepsOpts, runner: &dyn Runner) -> Result<DepsReport, 
                 continue;
             }
 
+            let entries = match prepare(runner, plan, manager, entries) {
+                Ok((ready, unready)) => {
+                    report.failed.extend(unready);
+                    ready
+                }
+                Err(e) => {
+                    let msg = e.to_string();
+                    report
+                        .failed
+                        .extend(entries.iter().map(|(w, _)| ((*w).to_owned(), msg.clone())));
+                    continue;
+                }
+            };
+
             let mut to_install: Vec<(&str, &str)> = Vec::new();
-            for &(written, name) in entries {
+            for &(written, name) in &entries {
                 match manager.is_installed(runner, name) {
                     Ok(true) => report.already_installed.push(written.to_owned()),
                     Ok(false) => to_install.push((written, name)),
@@ -256,6 +316,20 @@ pub fn install_deps(opts: &DepsOpts, runner: &dyn Runner) -> Result<DepsReport, 
                 Ok(()) => report
                     .installed
                     .extend(to_install.iter().map(|(w, _)| (*w).to_owned())),
+                // Only the named packages failed; the rest of the batch landed.
+                Err(PackageError::NotInstalled { packages, output }) => {
+                    for &(written, name) in &to_install {
+                        if packages.iter().any(|p| p == name) {
+                            let e = PackageError::NotInstalled {
+                                packages: vec![name.to_owned()],
+                                output: output.clone(),
+                            };
+                            report.failed.push((written.to_owned(), e.to_string()));
+                        } else {
+                            report.installed.push(written.to_owned());
+                        }
+                    }
+                }
                 Err(e) => {
                     let msg = e.to_string();
                     report.failed.extend(
@@ -275,7 +349,9 @@ pub fn install_deps(opts: &DepsOpts, runner: &dyn Runner) -> Result<DepsReport, 
 
 /// Ask each package's manager whether it can install the package, without
 /// installing anything. Groups and managers are chosen as in [`install_deps`];
-/// `opts.dry_run` is ignored.
+/// `opts.dry_run` is ignored. Scoop buckets that `bucket/app` entries name are
+/// added first, since Scoop can only look an app up in an added bucket; an
+/// entry whose bucket cannot be added is missing.
 pub fn check_deps(opts: &DepsOpts, runner: &dyn Runner) -> Result<CheckReport, DepsError> {
     let candidates = candidate_managers(opts)?;
     let (plans, skipped_unavailable) = plan_groups(opts, &candidates);
@@ -290,7 +366,20 @@ pub fn check_deps(opts: &DepsOpts, runner: &dyn Runner) -> Result<CheckReport, D
     for plan in &plans {
         for (manager, entries) in sources(plan) {
             note_manager(&mut report.managers_used, manager);
-            for &(written, name) in entries {
+            let entries = match prepare(runner, plan, manager, entries) {
+                Ok((ready, unready)) => {
+                    report.missing.extend(unready.into_iter().map(|(w, _)| w));
+                    ready
+                }
+                Err(e) => {
+                    let msg = e.to_string();
+                    report
+                        .failed
+                        .extend(entries.iter().map(|(w, _)| ((*w).to_owned(), msg.clone())));
+                    continue;
+                }
+            };
+            for &(written, name) in &entries {
                 match manager.exists(runner, name) {
                     Ok(true) => report.found.push(written.to_owned()),
                     Ok(false) => report.missing.push(written.to_owned()),

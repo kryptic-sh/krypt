@@ -8,6 +8,41 @@ patch bumps.
 
 ## [Unreleased]
 
+### Added
+
+- Scoop entries in `[[deps]]` can name the bucket they come from, e.g.
+  `scoop = ["git", "extras/alacritty", "nerd-fonts/Hack-NF-Mono"]`. `krypt deps`
+  and `krypt deps --check` add the buckets that are not added yet before looking
+  the apps up or installing them, installing git through scoop first when git is
+  not on `PATH` (scoop clones buckets with it). Buckets `scoop bucket known`
+  lists are added by name; any other takes its URL from the new `scoop_buckets`
+  table on the group, e.g.
+  `scoop_buckets = { kryptic-sh = "https://github.com/kryptic-sh/scoop-bucket" }`.
+  An entry whose bucket cannot be added is reported failed (missing under
+  `--check`) instead of being passed to scoop.
+
+### Fixed
+
+- `krypt deps` with scoop installed nothing: scoop exits 0 and
+  `scoop list <app>` always prints a header, so every app counted as installed.
+  Scoop exits 0 for failures too (an unknown app, a failed bucket add), so
+  `krypt deps` also reported apps it never installed as installed, and `--check`
+  reported unknown apps as found. Installed apps and added buckets are now read
+  from `scoop export`, an app exists when `scoop cat` prints its manifest, and
+  an install is confirmed against `scoop export` afterwards, reporting only the
+  apps scoop did not install as failed. Each app gets its own `scoop install`:
+  given several, scoop installs none of them when one is unknown. `scoop list`
+  also matched by substring (`git` matched `lazygit`); names now match exactly,
+  ignoring case.
+
+### Breaking
+
+- `krypt_pkg::manager::PackageError` has a new variant `NotInstalled`, and
+  `krypt_pkg::deps::DepGroup` and `krypt_core::config::DepsGroup` a new field
+  `scoop_buckets`.
+- `krypt_pkg::manager::MockRunner::with` registered for a call it already has
+  now queues a second response instead of replacing the first.
+
 ## [0.3.0] - 2026-09-19
 
 ### Added

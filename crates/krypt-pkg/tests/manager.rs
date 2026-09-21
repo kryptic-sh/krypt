@@ -1,14 +1,16 @@
 //! Integration tests for package manager impls and orchestration.
 
+use std::collections::BTreeMap;
+
 use krypt_pkg::apt::Apt;
 use krypt_pkg::brew::Brew;
 use krypt_pkg::cargo::Cargo;
 use krypt_pkg::deps::{DepGroup, DepsOpts, check_deps, install_deps};
 use krypt_pkg::detect::{detect_all, pick_by_name};
 use krypt_pkg::dnf::Dnf;
-use krypt_pkg::manager::{MockResponse, MockRunner, PackageManager, root_invocation};
+use krypt_pkg::manager::{MockResponse, MockRunner, PackageError, PackageManager, root_invocation};
 use krypt_pkg::pacman::Pacman;
-use krypt_pkg::scoop::Scoop;
+use krypt_pkg::scoop::{Scoop, add_buckets};
 use krypt_pkg::winget::Winget;
 
 // ─── pacman ───────────────────────────────────────────────────────────────────
@@ -152,45 +154,289 @@ fn brew_is_installed_empty_stdout() {
 
 // ─── scoop ────────────────────────────────────────────────────────────────────
 
+/// A `scoop export` response listing `apps` as `(name, info)` and `buckets`.
+fn scoop_export(apps: &[(&str, &str)], buckets: &[&str]) -> MockResponse {
+    let apps: Vec<String> = apps
+        .iter()
+        .map(|(name, info)| {
+            format!(r#"{{"Name":"{name}","Info":"{info}","Source":"main","Version":"1.0"}}"#)
+        })
+        .collect();
+    let buckets: Vec<String> = buckets
+        .iter()
+        .map(|name| format!(r#"{{"Name":"{name}","Source":"https://example.invalid"}}"#))
+        .collect();
+    scoop_says(&format!(
+        r#"{{"apps":[{}],"buckets":[{}]}}"#,
+        apps.join(","),
+        buckets.join(",")
+    ))
+}
+
+/// A scoop response printing `stdout`. Scoop exits 0 whatever happened (an
+/// unknown app included), so failures are mocked with exit 0 too.
+fn scoop_says(stdout: &str) -> MockResponse {
+    MockResponse {
+        status: 0,
+        stdout: stdout.into(),
+        stderr: String::new(),
+    }
+}
+
 #[test]
-fn scoop_install_no_sudo() {
-    let runner = MockRunner::new();
+fn scoop_is_installed_reads_the_export() {
+    let runner = MockRunner::new().with(
+        "scoop",
+        &["export"],
+        scoop_export(
+            &[("jq", ""), ("Alacritty", ""), ("broken", "Install failed")],
+            &["main"],
+        ),
+    );
+    assert!(Scoop.is_installed(&runner, "jq").unwrap());
+    assert!(Scoop.is_installed(&runner, "extras/alacritty").unwrap());
+    // `scoop list j` matches jq; an installed-check must not.
+    assert!(!Scoop.is_installed(&runner, "j").unwrap());
+    assert!(!Scoop.is_installed(&runner, "broken").unwrap());
+}
+
+#[test]
+fn scoop_is_installed_errors_on_unreadable_export() {
+    let runner = MockRunner::new().with("scoop", &["export"], scoop_says("not json"));
+    assert!(Scoop.is_installed(&runner, "jq").is_err());
+}
+
+#[test]
+fn scoop_install_one_call_per_package_confirmed_from_the_export() {
+    let runner = MockRunner::new().with(
+        "scoop",
+        &["export"],
+        scoop_export(&[("foo", ""), ("bar", "")], &["main"]),
+    );
     Scoop
-        .install(&runner, &["foo".to_string(), "bar".to_string()])
+        .install(&runner, &["foo".to_string(), "extras/bar".to_string()])
         .unwrap();
     let calls = runner.calls();
-    assert_eq!(calls.len(), 1);
-    let (cmd, args) = &calls[0];
-    assert_eq!(cmd, "scoop");
-    assert_eq!(args, &["install", "foo", "bar"]);
+    assert_eq!(
+        calls[0],
+        ("scoop".to_string(), vec!["install".into(), "foo".into()]),
+        "no sudo"
+    );
+    assert_eq!(calls[1].1, ["install", "extras/bar"]);
+    assert_eq!(calls[2].1, ["export"]);
 }
 
 #[test]
-fn scoop_is_installed_non_empty() {
-    let runner = MockRunner::new().with(
-        "scoop",
-        &["list", "git"],
-        MockResponse {
-            status: 0,
-            stdout: "git".into(),
-            stderr: String::new(),
-        },
-    );
-    assert!(Scoop.is_installed(&runner, "git").unwrap());
+fn scoop_install_reports_what_scoop_did_not_install() {
+    let runner = MockRunner::new()
+        .with(
+            "scoop",
+            &["install", "foo"],
+            scoop_says("'foo' (1.0) was installed successfully!"),
+        )
+        .with(
+            "scoop",
+            &["install", "no-such"],
+            scoop_says("Couldn't find manifest for 'no-such'."),
+        )
+        .with(
+            "scoop",
+            &["export"],
+            scoop_export(&[("foo", "")], &["main"]),
+        );
+    let err = Scoop
+        .install(&runner, &["foo".to_string(), "no-such".to_string()])
+        .unwrap_err();
+    match err {
+        PackageError::NotInstalled { packages, output } => {
+            assert_eq!(packages, ["no-such"]);
+            assert_eq!(output, "Couldn't find manifest for 'no-such'.");
+        }
+        other => panic!("expected NotInstalled, got {other:?}"),
+    }
 }
 
 #[test]
-fn scoop_is_installed_empty() {
-    let runner = MockRunner::new().with(
-        "scoop",
-        &["list", "git"],
-        MockResponse {
-            status: 0,
-            stdout: String::new(),
-            stderr: String::new(),
-        },
+fn scoop_exists_needs_a_json_manifest() {
+    let runner = MockRunner::new()
+        .with(
+            "scoop",
+            &["cat", "jq"],
+            scoop_says(r#"{"version":"1.8.2"}"#),
+        )
+        .with(
+            "scoop",
+            &["cat", "no-such"],
+            scoop_says("Couldn't find manifest for 'no-such'."),
+        );
+    assert!(Scoop.exists(&runner, "jq").unwrap());
+    assert!(!Scoop.exists(&runner, "no-such").unwrap());
+}
+
+#[test]
+fn scoop_add_buckets_adds_only_missing_buckets() {
+    let urls = BTreeMap::from([(
+        "kryptic-sh".to_string(),
+        "https://github.com/kryptic-sh/scoop-bucket".to_string(),
+    )]);
+    let runner = MockRunner::new()
+        .with("scoop", &["export"], scoop_export(&[], &["main", "Extras"]))
+        .with(
+            "scoop",
+            &["export"],
+            scoop_export(&[], &["main", "extras", "nerd-fonts", "kryptic-sh"]),
+        );
+    let missing = add_buckets(
+        &runner,
+        &[
+            "git",
+            "extras/alacritty",
+            "nerd-fonts/Hack-NF",
+            "kryptic-sh/pikr",
+            "kryptic-sh/hrdr",
+        ],
+        &urls,
+    )
+    .unwrap();
+    assert!(missing.is_empty(), "{missing:?}");
+
+    let adds: Vec<Vec<String>> = runner
+        .calls()
+        .into_iter()
+        .filter(|(_, args)| args.first().is_some_and(|a| a == "bucket"))
+        .map(|(_, args)| args)
+        .collect();
+    assert_eq!(
+        adds,
+        [
+            vec!["bucket", "add", "nerd-fonts"],
+            vec![
+                "bucket",
+                "add",
+                "kryptic-sh",
+                "https://github.com/kryptic-sh/scoop-bucket"
+            ],
+        ]
     );
-    assert!(!Scoop.is_installed(&runner, "git").unwrap());
+}
+
+#[test]
+fn scoop_add_buckets_returns_buckets_scoop_did_not_add() {
+    let runner = MockRunner::new().with("scoop", &["export"], scoop_export(&[], &["main"]));
+    let missing = add_buckets(&runner, &["no-such/app"], &BTreeMap::new()).unwrap();
+    assert_eq!(missing, ["no-such"]);
+}
+
+#[test]
+fn scoop_add_buckets_is_a_no_op_without_qualified_entries() {
+    let runner = MockRunner::new().with("scoop", &["export"], scoop_export(&[], &["main"]));
+    assert!(
+        add_buckets(&runner, &["git", "jq"], &BTreeMap::new())
+            .unwrap()
+            .is_empty()
+    );
+    assert_eq!(runner.calls().len(), 1, "only the export is read");
+}
+
+#[test]
+fn install_deps_with_scoop_adds_buckets_and_reports_per_package() {
+    let groups = vec![DepGroup {
+        group: "core".into(),
+        scoop: vec![
+            "git".into(),
+            "extras/alacritty".into(),
+            "gone/app".into(),
+            "no-such".into(),
+        ],
+        ..Default::default()
+    }];
+    let buckets_added = scoop_export(&[], &["main", "extras"]);
+    let runner = MockRunner::new()
+        // Bucket check, then the re-read after `bucket add`.
+        .with("scoop", &["export"], scoop_export(&[], &["main"]))
+        .with("scoop", &["export"], buckets_added.clone())
+        // One is_installed per ready entry.
+        .with("scoop", &["export"], buckets_added.clone())
+        .with("scoop", &["export"], buckets_added.clone())
+        .with("scoop", &["export"], buckets_added)
+        // Read back after the install.
+        .with(
+            "scoop",
+            &["export"],
+            scoop_export(&[("git", ""), ("alacritty", "")], &["main", "extras"]),
+        );
+
+    let opts = DepsOpts {
+        groups,
+        manager: Some("scoop".into()),
+        group_filter: None,
+        dry_run: false,
+    };
+    let report = install_deps(&opts, &runner).unwrap();
+
+    assert_eq!(report.installed, ["git", "extras/alacritty"]);
+    let failed: Vec<&str> = report.failed.iter().map(|(p, _)| p.as_str()).collect();
+    assert_eq!(failed, ["gone/app", "no-such"]);
+    assert!(
+        report.failed[0].1.contains("bucket `gone`"),
+        "{:?}",
+        report.failed
+    );
+    let installs: Vec<String> = runner
+        .calls()
+        .into_iter()
+        .filter(|(_, args)| args.len() == 2 && args[0] == "install")
+        .map(|(_, mut args)| args.remove(1))
+        .collect();
+    assert_eq!(
+        installs,
+        ["git", "extras/alacritty", "no-such"],
+        "the entry whose bucket is missing is never passed to scoop"
+    );
+}
+
+#[test]
+fn install_deps_dry_run_with_scoop_adds_no_buckets() {
+    let groups = vec![DepGroup {
+        group: "core".into(),
+        scoop: vec!["extras/alacritty".into()],
+        ..Default::default()
+    }];
+    let runner = MockRunner::new();
+    let opts = DepsOpts {
+        groups,
+        manager: Some("scoop".into()),
+        group_filter: None,
+        dry_run: true,
+    };
+    let report = install_deps(&opts, &runner).unwrap();
+    assert_eq!(report.installed, ["extras/alacritty"]);
+    assert!(runner.calls().is_empty(), "{:?}", runner.calls());
+}
+
+#[test]
+fn check_deps_with_scoop_counts_a_bucket_it_cannot_add_as_missing() {
+    let groups = vec![DepGroup {
+        group: "core".into(),
+        scoop: vec!["jq".into(), "gone/app".into()],
+        ..Default::default()
+    }];
+    let runner = MockRunner::new()
+        .with("scoop", &["export"], scoop_export(&[], &["main"]))
+        .with(
+            "scoop",
+            &["cat", "jq"],
+            scoop_says(r#"{"version":"1.8.2"}"#),
+        );
+    let opts = DepsOpts {
+        groups,
+        manager: Some("scoop".into()),
+        group_filter: None,
+        dry_run: false,
+    };
+    let report = check_deps(&opts, &runner).unwrap();
+    assert_eq!(report.found, ["jq"]);
+    assert_eq!(report.missing, ["gone/app"]);
 }
 
 // ─── winget ───────────────────────────────────────────────────────────────────
@@ -618,21 +864,18 @@ fn brew_exists_rejects_disabled_and_unknown_packages() {
 }
 
 #[test]
-fn scoop_winget_exists_follow_exit_status() {
-    let runner = MockRunner::new()
-        .with("scoop", &["info", "pikr"], MockResponse::failure())
-        .with(
-            "winget",
-            &[
-                "show",
-                "--id",
-                "Git.Git",
-                "--exact",
-                "--accept-source-agreements",
-            ],
-            MockResponse::success(),
-        );
-    assert!(!Scoop.exists(&runner, "pikr").unwrap());
+fn winget_exists_follows_exit_status() {
+    let runner = MockRunner::new().with(
+        "winget",
+        &[
+            "show",
+            "--id",
+            "Git.Git",
+            "--exact",
+            "--accept-source-agreements",
+        ],
+        MockResponse::success(),
+    );
     assert!(Winget.exists(&runner, "Git.Git").unwrap());
 }
 

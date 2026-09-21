@@ -61,6 +61,33 @@ standardise on PowerShell 7. `System.Windows.Forms` is available in both on
 Windows, so `pwsh` first with a `powershell` fallback would work; it ties into
 the MessageBox-versus-toast choice above.
 
+## Bugs
+
+### `krypt update --dry-run` auto-stashes
+
+Seen on Windows: `krypt update --dry-run` in a dotfiles checkout with local
+changes failed with `auto-stash push failed: ...`, so the dry run was about to
+stash. `--dry-run` is documented as "show plan, change nothing". Not traced in
+`update` yet.
+
+### Auto-stash fails on git symlinks checked out as files
+
+The same run failed reading `.claude-work/CLAUDE.md`, a symlink in git that Git
+for Windows (`core.symlinks = false`) checks out as a small text file holding
+the target path. gix's stash reads the worktree entry as a symlink and errors,
+so `krypt update` cannot stash in such a repo on Windows. The mxaddict dotfiles
+are dropping their symlinks, which hides this there; any other repo with
+symlinks still hits it.
+
+### Programs installed mid-run are not on krypt's `PATH`
+
+Scoop and winget packages that add a directory to the user `PATH` (`mingw`,
+`rustup`'s `~/.cargo/bin`) change the registry, not the running process, so a
+later step in the same `krypt deps` — a `cargo:` entry after `rustup` — fails
+with `program not found`. Scoop's shims avoid this for most apps. Options:
+re-read the user and machine `PATH` from the registry after each Windows
+install, or document running `krypt deps` twice.
+
 ## Deferred
 
 ### Battery reading on macOS and Windows
@@ -82,8 +109,13 @@ since logging a battery reading only works on Linux.
 
 ## Unverified
 
-- **`scoop info` as the `--check` lookup.** `Scoop::exists` treats a non-zero
-  exit as "missing"; not run against a real scoop install.
+- **Scoop's behaviour is pinned by hand, not by CI.** Everything `Scoop` relies
+  on — exit 0 on every failure, `scoop export` JSON, `scoop cat` printing JSON
+  only for a known app, one unknown app aborting a multi-app `scoop install` —
+  was observed against Scoop 0.5.3 on one Windows 11 machine and is encoded in
+  mocks. No CI job installs scoop, so a scoop release that changes any of it
+  goes unnoticed. The `Install failed` filter in `scoop::export` comes from
+  reading `scoop-list.ps1`, not from a failed install.
 - **Untrusted Homebrew taps in `--check`.** Homebrew ignores formulae from a tap
   until `brew trust --tap <tap>`. On Linuxbrew 4.6.20 `brew tap` of an untrusted
   tap exits 1, so `Brew::exists` reports its packages missing; on the 2026-09-15
