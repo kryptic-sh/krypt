@@ -98,6 +98,19 @@ mod tests {
 
     const SHIM_OUTPUT: &str = "krypt-shim-ok";
 
+    /// Held by every test here that writes a shim or spawns a process. On
+    /// Linux a child forked while another thread still has a shim open for
+    /// writing inherits that descriptor until it execs, and running the shim
+    /// meanwhile fails with "Text file busy" (ETXTBSY).
+    static SPAWN_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    fn spawn_lock() -> std::sync::MutexGuard<'static, ()> {
+        // A test that panicked while holding it leaves nothing to clean up.
+        SPAWN_LOCK
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
+
     /// Write a script shim named `name` into `dir` that prints [`SHIM_OUTPUT`].
     fn write_shim(dir: &Path, name: &str) {
         #[cfg(windows)]
@@ -117,6 +130,7 @@ mod tests {
 
     #[test]
     fn resolves_a_script_shim_that_then_spawns() {
+        let _spawning = spawn_lock();
         let dir = tempfile::tempdir().expect("tempdir");
         write_shim(dir.path(), "krypt-shim");
 
@@ -175,6 +189,7 @@ mod tests {
 
     #[test]
     fn command_in_path_finds_and_passes_on_the_given_path() {
+        let _spawning = spawn_lock();
         let dir = tempfile::tempdir().expect("tempdir");
         write_shim(dir.path(), "krypt-shim-in-path");
         let out = command_in_path("krypt-shim-in-path", dir.path().as_os_str())
@@ -186,6 +201,7 @@ mod tests {
 
     #[test]
     fn command_spawns_a_program_from_path() {
+        let _spawning = spawn_lock();
         let out = command("git").arg("--version").output().expect("spawn git");
         assert!(out.status.success(), "git exited with {}", out.status);
         assert!(String::from_utf8_lossy(&out.stdout).starts_with("git version"));
