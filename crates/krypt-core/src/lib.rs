@@ -22,8 +22,8 @@
 //!   (issue #14)
 //! - [`update`]      — `krypt update` orchestration: pull repo + re-deploy
 //!   (issue #17)
-//! - [`adopt`]       — `krypt adopt` / `krypt adopt-edits`: import existing
-//!   dotfiles into the repo and sync in-place edits back (issue #16)
+//! - [`adopt`]       — `krypt adopt`: import existing dotfiles into the repo
+//!   and sync in-place edits back (issue #16)
 //! - [`doctor`]      — `krypt doctor` diagnostic health-check: prints one
 //!   status line per check and serializes to JSON for `--json` (issue #20)
 //!

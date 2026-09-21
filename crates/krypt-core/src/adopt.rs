@@ -1,13 +1,14 @@
-//! `krypt adopt` and `krypt adopt-edits` — import existing dotfiles into the repo.
+//! `krypt adopt` — import existing dotfiles into the repo.
 //!
-//! `adopt` copies a file that already lives at its deployed location (`dst`)
+//! [`adopt`] copies a file that already lives at its deployed location (`dst`)
 //! into the repo at the derived or user-supplied `src` path, then records a
 //! manifest entry.  The original file at `dst` is left untouched.
 //!
-//! `adopt_edits` scans every manifest entry for drift and, for each drifted
+//! [`adopt_edits`] scans manifest entries for drift and, for each drifted
 //! entry, copies the current `dst` bytes back into `<repo>/<src>` and refreshes
 //! the manifest hashes.  This is the "I edited my deployed dotfiles in-place;
-//! sync those edits back to the repo" workflow.
+//! sync those edits back to the repo" workflow. The CLI runs it first and
+//! imports with [`adopt`] the paths it reports no entry for.
 
 use std::fs;
 use std::io;
@@ -162,48 +163,83 @@ pub struct AdoptEditsOpts {
     pub manifest_path: PathBuf,
     /// Absolute path to the dotfiles repo root (used to resolve `<repo>/<src>`).
     pub repo_path: PathBuf,
+    /// Absolute destinations to consider; empty means every manifest entry
+    /// except `[[template]]` destinations.
+    pub only: Vec<PathBuf>,
     /// Print what would happen without touching disk or saving the manifest.
     pub dry_run: bool,
 }
 
+/// One destination whose edits were (or, in dry-run, would be) adopted.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Adopted {
+    /// Repo-relative source path the edits were copied to.
+    pub src: PathBuf,
+    /// Absolute destination path the edits came from.
+    pub dst: PathBuf,
+}
+
 /// Result of a successful [`adopt_edits`] call.
-#[derive(Debug)]
+#[derive(Debug, Default)]
 pub struct AdoptEditsReport {
-    /// Number of drifted entries whose edits were adopted.
-    pub adopted: usize,
+    /// Drifted entries whose edits were adopted, in manifest order.
+    pub adopted: Vec<Adopted>,
     /// Number of entries that were already clean.
     pub clean: usize,
     /// Number of entries whose `dst` was missing (skipped with a warning).
     pub missing: usize,
+    /// Drifted `[[template]]` destinations left alone because
+    /// [`AdoptEditsOpts::only`] did not name them.
+    pub templates_skipped: usize,
+    /// Paths in [`AdoptEditsOpts::only`] that no manifest entry deploys to.
+    pub unmatched: Vec<PathBuf>,
 }
 
 /// For every drifted manifest entry, copy `dst` back into `<repo>/<src>` and
 /// refresh the manifest hashes.
 ///
+/// With [`AdoptEditsOpts::only`] empty, every entry is considered except
+/// `[[template]]` destinations: a template seeds a per-machine file (a git
+/// identity, a monitor layout) whose values do not belong in the template, so
+/// one is adopted only when `only` names it. Otherwise just the named
+/// destinations are considered, and the named paths no entry deploys to are
+/// returned in [`AdoptEditsReport::unmatched`].
+///
 /// Clean entries are silently skipped.  Missing-dst entries are skipped with a
 /// warning to stderr.  After processing, the manifest is saved atomically
 /// (unless `dry_run` is set).
 pub fn adopt_edits(opts: &AdoptEditsOpts) -> Result<AdoptEditsReport, AdoptError> {
-    let Some(mut manifest) =
-        Manifest::load(&opts.manifest_path).map_err(|e| AdoptError::Manifest(Box::new(e)))?
-    else {
-        return Ok(AdoptEditsReport {
-            adopted: 0,
-            clean: 0,
-            missing: 0,
-        });
+    let manifest =
+        Manifest::load(&opts.manifest_path).map_err(|e| AdoptError::Manifest(Box::new(e)))?;
+    let mut report = AdoptEditsReport {
+        unmatched: opts
+            .only
+            .iter()
+            .filter(|p| {
+                !manifest
+                    .as_ref()
+                    .is_some_and(|m| m.entries.keys().any(|dst| same_path(p, dst)))
+            })
+            .cloned()
+            .collect(),
+        ..Default::default()
+    };
+    let Some(mut manifest) = manifest else {
+        return Ok(report);
     };
 
     let drift = detect_drift(&manifest);
-    let mut report = AdoptEditsReport {
-        adopted: 0,
-        clean: 0,
-        missing: 0,
-    };
-
     let mut updated: Vec<ManifestEntry> = Vec::new();
 
     for record in drift {
+        let named = opts.only.iter().any(|p| same_path(p, &record.dst));
+        if !opts.only.is_empty() && !named {
+            continue;
+        }
+        if record.status == DriftStatus::Drifted && record.kind == EntryKind::Template && !named {
+            report.templates_skipped += 1;
+            continue;
+        }
         match record.status {
             DriftStatus::Clean => {
                 report.clean += 1;
@@ -227,6 +263,10 @@ pub fn adopt_edits(opts: &AdoptEditsOpts) -> Result<AdoptEditsReport, AdoptError
                 } else {
                     hash_file(&repo_src).map_err(AdoptError::Io)?
                 };
+                report.adopted.push(Adopted {
+                    src: record.src.clone(),
+                    dst: record.dst.clone(),
+                });
                 updated.push(ManifestEntry {
                     src: record.src,
                     dst: record.dst,
@@ -235,7 +275,6 @@ pub fn adopt_edits(opts: &AdoptEditsOpts) -> Result<AdoptEditsReport, AdoptError
                     hash_dst: hash,
                     deployed_at: now_unix(),
                 });
-                report.adopted += 1;
             }
         }
     }
@@ -253,6 +292,26 @@ pub fn adopt_edits(opts: &AdoptEditsOpts) -> Result<AdoptEditsReport, AdoptError
 }
 
 // ─── Internals ───────────────────────────────────────────────────────────────
+
+/// Whether `a` and `b` name the same file, compared component by component so
+/// the separators do not matter (`C:\Users\me/.gitconfig` is
+/// `C:\Users\me\.gitconfig`), and ignoring case on Windows, whose file names
+/// do. Neither path is resolved against the filesystem.
+pub fn same_path(a: &Path, b: &Path) -> bool {
+    let key = |p: &Path| {
+        let joined = p
+            .components()
+            .map(|c| c.as_os_str().to_string_lossy().into_owned())
+            .collect::<Vec<_>>()
+            .join("/");
+        if cfg!(windows) {
+            joined.to_lowercase()
+        } else {
+            joined
+        }
+    };
+    key(a) == key(b)
+}
 
 /// Derive the repo-relative `src` path by stripping the `$HOME` prefix from
 /// `dst`.  Returns [`AdoptError::OutsideHome`] when `dst` is not under `HOME`.
@@ -564,11 +623,12 @@ mod tests {
         let report = adopt_edits(&AdoptEditsOpts {
             manifest_path: manifest_path.clone(),
             repo_path: repo.path().to_path_buf(),
+            only: Vec::new(),
             dry_run: false,
         })
         .unwrap();
 
-        assert_eq!(report.adopted, 1);
+        assert_eq!(report.adopted.len(), 1);
         assert_eq!(report.clean, 0);
         assert_eq!(report.missing, 0);
 
@@ -610,11 +670,12 @@ mod tests {
         let report = adopt_edits(&AdoptEditsOpts {
             manifest_path: manifest_path.clone(),
             repo_path: repo.path().to_path_buf(),
+            only: Vec::new(),
             dry_run: false,
         })
         .unwrap();
 
-        assert_eq!(report.adopted, 0);
+        assert!(report.adopted.is_empty());
         assert_eq!(report.clean, 1);
         assert_eq!(report.missing, 0);
 
@@ -649,11 +710,12 @@ mod tests {
         let report = adopt_edits(&AdoptEditsOpts {
             manifest_path: manifest_path.clone(),
             repo_path: repo.path().to_path_buf(),
+            only: Vec::new(),
             dry_run: true,
         })
         .unwrap();
 
-        assert_eq!(report.adopted, 1);
+        assert_eq!(report.adopted.len(), 1);
 
         // Repo file still has original content.
         assert_eq!(fs::read(repo.path().join(".vimrc")).unwrap(), b"original");
@@ -694,15 +756,144 @@ mod tests {
         let report = adopt_edits(&AdoptEditsOpts {
             manifest_path: manifest_path.clone(),
             repo_path: repo.path().to_path_buf(),
+            only: Vec::new(),
             dry_run: false,
         })
         .unwrap();
 
         assert_eq!(report.missing, 1);
-        assert_eq!(report.adopted, 0);
+        assert!(report.adopted.is_empty());
 
         // Manifest entry preserved.
         let manifest = Manifest::load(&manifest_path).unwrap().unwrap();
         assert_eq!(manifest.entries.len(), 1);
+    }
+
+    /// A manifest with one drifted `[[link]]` and one drifted `[[template]]`
+    /// entry: `(repo, home, state, manifest_path, link_dst, template_dst)`.
+    fn drifted_link_and_template() -> (
+        tempfile::TempDir,
+        tempfile::TempDir,
+        tempfile::TempDir,
+        PathBuf,
+        PathBuf,
+        PathBuf,
+    ) {
+        let home = tempdir().unwrap();
+        let repo = tempdir().unwrap();
+        let state = tempdir().unwrap();
+        let manifest_path = state.path().join("manifest.json");
+        let mut manifest = Manifest::new(repo.path().to_path_buf());
+        let mut dsts = Vec::new();
+        for (src, kind) in [
+            (".starship.toml", EntryKind::Link),
+            (".gitconfig.local.template", EntryKind::Template),
+        ] {
+            fs::write(repo.path().join(src), b"repo").unwrap();
+            let dst = home.path().join(src.trim_end_matches(".template"));
+            fs::write(&dst, b"edited on this machine").unwrap();
+            let hash = hash_file(&repo.path().join(src)).unwrap();
+            manifest.record(ManifestEntry {
+                src: PathBuf::from(src),
+                dst: dst.clone(),
+                kind,
+                hash_src: hash.clone(),
+                hash_dst: hash,
+                deployed_at: 0,
+            });
+            dsts.push(dst);
+        }
+        manifest.save(&manifest_path).unwrap();
+        let template_dst = dsts.pop().unwrap();
+        let link_dst = dsts.pop().unwrap();
+        (repo, home, state, manifest_path, link_dst, template_dst)
+    }
+
+    #[test]
+    fn adopt_edits_skips_templates_unless_named() {
+        let (repo, _home, _state, manifest_path, link_dst, template_dst) =
+            drifted_link_and_template();
+        let opts = |only: Vec<PathBuf>| AdoptEditsOpts {
+            manifest_path: manifest_path.clone(),
+            repo_path: repo.path().to_path_buf(),
+            only,
+            dry_run: false,
+        };
+
+        let report = adopt_edits(&opts(Vec::new())).unwrap();
+        assert_eq!(
+            report.adopted,
+            [Adopted {
+                src: PathBuf::from(".starship.toml"),
+                dst: link_dst,
+            }]
+        );
+        assert_eq!(report.templates_skipped, 1);
+        assert_eq!(
+            fs::read(repo.path().join(".gitconfig.local.template")).unwrap(),
+            b"repo",
+            "the template keeps its placeholders"
+        );
+
+        let report = adopt_edits(&opts(vec![template_dst])).unwrap();
+        assert_eq!(report.adopted.len(), 1);
+        assert_eq!(report.templates_skipped, 0);
+        assert_eq!(
+            fs::read(repo.path().join(".gitconfig.local.template")).unwrap(),
+            b"edited on this machine"
+        );
+    }
+
+    #[test]
+    fn adopt_edits_only_named_paths_and_reports_unknown_ones() {
+        let (repo, home, _state, manifest_path, link_dst, _template_dst) =
+            drifted_link_and_template();
+        let stranger = home.path().join("not-deployed.conf");
+
+        let report = adopt_edits(&AdoptEditsOpts {
+            manifest_path,
+            repo_path: repo.path().to_path_buf(),
+            only: vec![link_dst.clone(), stranger.clone()],
+            dry_run: true,
+        })
+        .unwrap();
+
+        assert_eq!(report.adopted.len(), 1);
+        assert_eq!(report.adopted[0].dst, link_dst);
+        assert_eq!(
+            report.templates_skipped, 0,
+            "unnamed entries are not looked at"
+        );
+        assert_eq!(report.unmatched, [stranger]);
+    }
+
+    #[test]
+    fn adopt_edits_without_a_manifest_returns_every_named_path_unmatched() {
+        let state = tempdir().unwrap();
+        let named = state.path().join("new.conf");
+        let report = adopt_edits(&AdoptEditsOpts {
+            manifest_path: state.path().join("manifest.json"),
+            repo_path: state.path().to_path_buf(),
+            only: vec![named.clone()],
+            dry_run: false,
+        })
+        .unwrap();
+        assert!(report.adopted.is_empty());
+        assert_eq!(report.unmatched, [named]);
+    }
+
+    #[test]
+    fn same_path_ignores_separators_and_windows_case() {
+        assert!(same_path(
+            Path::new("home/me/.config/x.toml"),
+            Path::new("home/me/.config/x.toml")
+        ));
+        assert!(!same_path(Path::new("home/me/a"), Path::new("home/me/b")));
+        if cfg!(windows) {
+            assert!(same_path(
+                Path::new(r"C:\Users\me/.gitconfig"),
+                Path::new(r"c:\users\ME\.gitconfig")
+            ));
+        }
     }
 }

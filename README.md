@@ -82,7 +82,6 @@ First run, against a freshly cloned repo:
 
 ```sh
 krypt init https://github.com/you/dotfiles   # clone to ${XDG_CONFIG}/krypt/repo
-cd ~/.config/krypt/repo
 krypt deps                                   # install [[deps]] packages
 krypt setup                                  # interactive [prompts.*] wizard
 krypt link                                   # deploy: copy files to destinations
@@ -97,12 +96,11 @@ krypt doctor   # diagnostic
 
 Notes on that sequence:
 
-- `krypt deps`, `krypt setup`, and `krypt link` read `.krypt.toml` from the
-  **current directory** by default — hence the `cd`. Pass
-  `--config <repo>/.krypt.toml` to run them from elsewhere. (`krypt setup` also
-  falls back to the repo path recorded in the tool config.)
-- `krypt update` finds the repo through the tool config written by `init`, so it
-  needs no flag.
+- Every command finds the repo the same way: `--config` (or `--repo-path`) when
+  given, else `.krypt.toml` in the **current directory**, else the repo
+  `krypt init` recorded in the tool config. So after `init` they run from
+  anywhere; `cd` into another checkout to work on that one instead.
+  `krypt update` always uses the recorded repo.
 - **`krypt setup` only runs the wizard.** It reads `[prompts.*]` sections, asks
   the questions, and writes the answers to the `[[template]]` destinations that
   name those sections. It does not install packages and does not deploy — run
@@ -117,8 +115,8 @@ Useful subcommands:
 | `krypt validate`                   | parse `.krypt.toml`, report schema errors                         |
 | `krypt paths`                      | print every resolved `${VAR}` for this host                       |
 | `krypt diff`                       | compare deployed files to the manifest: clean / drifted / missing |
-| `krypt adopt <path>`               | import an existing file into the repo, print a `[[link]]` block   |
-| `krypt adopt-edits`                | copy hand-edits on drifted destinations back into the repo        |
+| `krypt adopt`                      | copy edits made to deployed files back into the repo              |
+| `krypt adopt <path>...`            | adopt those files: edits if deployed, else import as new          |
 | `krypt unlink` / `relink`          | delete manifest-tracked destinations / unlink then link again     |
 | `krypt notify <title> <body>`      | platform-correct desktop notification                             |
 | `krypt menu`                       | list `[[command]] group = "menu"` entries                         |
@@ -126,10 +124,12 @@ Useful subcommands:
 | `krypt <group> <name>`             | generic dispatcher for any group                                  |
 | `krypt battery {report,log,clear}` | built-in battery state utility                                    |
 
-`adopt` and `adopt-edits` are different tools: `adopt <path>` brings a file that
-krypt does not manage yet into the repo, while `adopt-edits` walks the manifest
-and pulls edits you made in place on already-deployed files back to their repo
-sources.
+`krypt adopt` with no paths walks the manifest and copies every deployed file
+you edited in place back to its repo source, except `[[template]]` destinations:
+those hold per-machine values (your git identity, a monitor layout) that do not
+belong in the template, so one is adopted only when you name it. Given paths, it
+does that for the deployed ones and imports the others as new repo files,
+printing the `[[link]]` block to paste. `adopt-edits` is an alias for it.
 
 ## Migrating from stow + bash
 

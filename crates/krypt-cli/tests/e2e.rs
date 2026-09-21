@@ -430,6 +430,200 @@ fn test_adopt_edits() {
     );
 }
 
+/// A repo `krypt init` recorded somewhere other than the default
+/// `~/.config/krypt/repo`, deployed with `krypt link` run from the home
+/// directory (no `.krypt.toml` there), holding one `[[link]]` and one
+/// `[[template]]`. Returns `(repo, work dir without a .krypt.toml)`.
+fn linked_elsewhere(env: &Env) -> (PathBuf, PathBuf) {
+    env.create_xdg_dirs();
+    let rp = env.path("dotfiles");
+    cmd(env)
+        .args(["init", "--bare", "--repo-path", &rp.to_string_lossy()])
+        .assert()
+        .success();
+    let home = toml_path(env.home.path());
+    fs::write(
+        rp.join(".krypt.toml"),
+        format!(
+            "[[link]]\nsrc = \"starship.toml\"\ndst = \"{home}/.config/starship.toml\"\n\n\
+             [[template]]\nsrc = \"local.template\"\ndst = \"{home}/.local.conf\"\nprompts = []\n"
+        ),
+    )
+    .expect("write .krypt.toml");
+    fs::write(rp.join("starship.toml"), b"repo\n").expect("write link source");
+    fs::write(rp.join("local.template"), b"name = {{name}}\n").expect("write template");
+
+    let work = env.path("work");
+    fs::create_dir_all(&work).expect("create work dir");
+    cmd(env).current_dir(&work).arg("link").assert().success();
+    assert_eq!(
+        fs::read(env.path(".config/starship.toml")).expect("deployed link"),
+        b"repo\n"
+    );
+    (rp, work)
+}
+
+/// Without `--config`, `link`, `deps`, `validate` and `adopt` find the repo
+/// `krypt init` recorded, wherever it is.
+#[test]
+fn test_commands_find_the_recorded_repo() {
+    let env = Env::new();
+    let (_rp, work) = linked_elsewhere(&env);
+    for args in [
+        &["validate"][..],
+        &["link", "--dry-run"],
+        &["deps", "--dry-run", "--manager", "pacman"],
+        &["adopt", "--dry-run"],
+    ] {
+        cmd(&env).current_dir(&work).args(args).assert().success();
+    }
+    assert!(
+        !env.path(".config/krypt/repo").exists(),
+        "nothing may fall back to the default repo path"
+    );
+}
+
+/// A `.krypt.toml` in the current directory wins over the recorded repo.
+#[test]
+fn test_config_in_current_dir_wins() {
+    let env = Env::new();
+    let (_rp, _work) = linked_elsewhere(&env);
+    let other = env.path("other");
+    fs::create_dir_all(&other).expect("create other repo");
+    fs::write(other.join(".krypt.toml"), "this is not toml").expect("write broken config");
+
+    let out = cmd(&env)
+        .current_dir(&other)
+        .arg("validate")
+        .output()
+        .expect("run validate");
+    assert!(
+        !out.status.success(),
+        "the broken config in the current directory must be the one read"
+    );
+}
+
+/// `krypt adopt` with no paths adopts changed `[[link]]` destinations into the
+/// recorded repo and leaves changed `[[template]]` destinations alone.
+#[test]
+fn test_adopt_without_paths_skips_templates() {
+    let env = Env::new();
+    let (rp, work) = linked_elsewhere(&env);
+    fs::write(env.path(".config/starship.toml"), b"edited\n").expect("edit link");
+    fs::write(env.path(".local.conf"), b"name = me\n").expect("fill template");
+
+    let out = cmd(&env)
+        .current_dir(&work)
+        .arg("adopt")
+        .output()
+        .expect("run adopt");
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(out.status.success(), "{stdout}");
+    assert_eq!(fs::read(rp.join("starship.toml")).unwrap(), b"edited\n");
+    assert_eq!(
+        fs::read(rp.join("local.template")).unwrap(),
+        b"name = {{name}}\n",
+        "the template keeps its placeholder"
+    );
+    assert!(stdout.contains("left alone: 1"), "{stdout}");
+    assert!(!env.path(".config/krypt/repo").exists());
+
+    // Named, the template destination is adopted.
+    cmd(&env)
+        .current_dir(&work)
+        .args(["adopt", &env.path(".local.conf").to_string_lossy()])
+        .assert()
+        .success();
+    assert_eq!(fs::read(rp.join("local.template")).unwrap(), b"name = me\n");
+}
+
+/// `krypt adopt <path>` imports a file krypt does not deploy yet into the
+/// recorded repo, and adopts the edits of one it does, in one call.
+#[test]
+fn test_adopt_paths_imports_new_and_adopts_deployed() {
+    let env = Env::new();
+    let (rp, work) = linked_elsewhere(&env);
+    fs::write(env.path(".config/starship.toml"), b"edited\n").expect("edit link");
+    let new_file = env.path(".config/nvim/init.lua");
+    fs::create_dir_all(new_file.parent().unwrap()).unwrap();
+    fs::write(&new_file, b"-- new\n").expect("write new file");
+
+    let out = cmd(&env)
+        .current_dir(&work)
+        .args([
+            "adopt",
+            &env.path(".config/starship.toml").to_string_lossy(),
+            &new_file.to_string_lossy(),
+        ])
+        .output()
+        .expect("run adopt");
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(out.status.success(), "{stdout}");
+    assert_eq!(fs::read(rp.join("starship.toml")).unwrap(), b"edited\n");
+    assert_eq!(
+        fs::read(rp.join(".config/nvim/init.lua")).unwrap(),
+        b"-- new\n"
+    );
+    assert!(stdout.contains("[[link]]"), "{stdout}");
+
+    // Both are clean now: a second run adopts nothing.
+    let again = cmd(&env)
+        .current_dir(&work)
+        .args(["adopt", &new_file.to_string_lossy()])
+        .output()
+        .expect("run adopt again");
+    let stdout = String::from_utf8_lossy(&again.stdout);
+    assert!(again.status.success(), "{stdout}");
+    assert!(stdout.contains("unchanged: 1"), "{stdout}");
+}
+
+/// `--src` names one new file's source, so it refuses several paths and a
+/// path krypt already deploys, before copying anything.
+#[test]
+fn test_adopt_src_takes_one_new_file() {
+    let env = Env::new();
+    let (rp, work) = linked_elsewhere(&env);
+    fs::write(env.path(".config/starship.toml"), b"edited\n").expect("edit link");
+
+    cmd(&env)
+        .current_dir(&work)
+        .args([
+            "adopt",
+            "--src",
+            "x",
+            &env.path(".config/starship.toml").to_string_lossy(),
+        ])
+        .assert()
+        .code(2);
+    assert_eq!(
+        fs::read(rp.join("starship.toml")).unwrap(),
+        b"repo\n",
+        "a refused --src adopts nothing"
+    );
+}
+
+/// With no repo anywhere, `adopt` refuses instead of creating one.
+#[test]
+fn test_adopt_without_a_repo_errors() {
+    let env = Env::new();
+    env.create_xdg_dirs();
+    let file = env.path(".somerc");
+    fs::write(&file, b"x").unwrap();
+
+    let out = cmd(&env)
+        .current_dir(env.home.path())
+        .args(["adopt", &file.to_string_lossy()])
+        .output()
+        .expect("run adopt");
+    assert!(!out.status.success());
+    assert!(
+        String::from_utf8_lossy(&out.stderr).contains("no dotfiles repo found"),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(!env.path(".config/krypt/repo").exists());
+}
+
 /// `krypt deps --dry-run` — reads a synthetic config with one `[[deps]]` group,
 /// exits 0, and prints the expected packages without touching the system.
 #[test]

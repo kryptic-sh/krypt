@@ -11,7 +11,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use clap::{Parser, Subcommand, ValueEnum};
 use color_eyre::Result;
-use krypt_core::adopt::{AdoptEditsOpts, AdoptError, AdoptOpts, adopt, adopt_edits};
+use krypt_core::adopt::{AdoptEditsOpts, AdoptError, AdoptOpts, adopt, adopt_edits, same_path};
 use krypt_core::battery::{BatteryError, BatteryReader, default_reader};
 use krypt_core::deploy::{DeployOpts, LinkReport, UnlinkReport, link, relink, unlink};
 use krypt_core::dispatch::{DispatchError, DispatchOpts, list_in_group, run_in_group};
@@ -67,9 +67,8 @@ enum Command {
     /// Exits 0 on success, non-zero with a pretty error on failure.
     Validate {
         /// Path to the config file to check. Defaults to `.krypt.toml` in
-        /// the current directory.
-        #[arg(default_value = ".krypt.toml")]
-        path: PathBuf,
+        /// the current directory, else the repo `krypt init` recorded.
+        path: Option<PathBuf>,
     },
 
     /// Resolve and print every known path variable.
@@ -77,10 +76,11 @@ enum Command {
     /// Useful for sanity-checking that XDG paths land where you expect on
     /// the current host, and for debugging `[paths]` overrides.
     Paths {
-        /// Apply `[paths]` overrides from this config (defaults to
-        /// `.krypt.toml` if present). Pass `--no-config` to skip.
-        #[arg(long, default_value = ".krypt.toml")]
-        config: PathBuf,
+        /// Apply `[paths]` overrides from this config. Defaults to
+        /// `.krypt.toml` in the current directory, else the repo `krypt init`
+        /// recorded, when either exists. Pass `--no-config` to skip.
+        #[arg(long)]
+        config: Option<PathBuf>,
 
         /// Don't read overrides from any config file.
         #[arg(long, conflicts_with = "config")]
@@ -127,8 +127,8 @@ enum Command {
 
     /// Clone a dotfiles repo and write the tool config.
     ///
-    /// After `init`, run `krypt link --config <repo-path>/.krypt.toml` to
-    /// deploy your dotfiles.
+    /// After `init`, run `krypt link` from anywhere to deploy your dotfiles;
+    /// commands find the repo through the tool config it writes.
     Init(InitArgs),
 
     /// Pull the dotfiles repo and re-deploy.
@@ -142,22 +142,21 @@ enum Command {
     /// state is left on disk and `refs/stash` retains the original stash.
     Update(UpdateArgs),
 
-    /// Import an existing file into the dotfiles repo.
+    /// Copy files from their deployed location into the dotfiles repo.
     ///
-    /// Copies the file at `<dst>` into the repo (auto-derives the repo-relative
-    /// path by stripping `$HOME`), records a manifest entry, and prints a
-    /// `[[link]]` block to paste into `.krypt.toml`.
+    /// With no PATHS, copies the edits of every deployed file that changed
+    /// since `krypt link` wrote it back to its source in the repo, and
+    /// refreshes the manifest. `[[template]]` destinations are left out: they
+    /// hold per-machine values (a git identity, a monitor layout) that do not
+    /// belong in the template.
     ///
-    /// The original file at `<dst>` is left in place — nothing is moved.
-    #[command(name = "adopt")]
+    /// With PATHS, each one krypt deployed has its edits copied back —
+    /// a template destination too, when named — and each one it did not is
+    /// imported into the repo as a new source (the repo-relative path is its
+    /// path under `$HOME`), recorded in the manifest, and a `[[link]]` block
+    /// to paste into `.krypt.toml` is printed. Files are copied, never moved.
+    #[command(name = "adopt", alias = "adopt-edits")]
     Adopt(AdoptArgs),
-
-    /// Sync in-place edits on deployed files back into the repo.
-    ///
-    /// For every drifted manifest entry, copies `dst` bytes back into
-    /// `<repo>/<src>` and refreshes the manifest hashes.
-    #[command(name = "adopt-edits")]
-    AdoptEdits(AdoptEditsArgs),
 
     /// Run a full diagnostic health-check.
     ///
@@ -283,16 +282,18 @@ struct UpdateArgs {
 
 #[derive(clap::Args, Debug)]
 struct AdoptArgs {
-    /// Absolute path to the file to import (typically under `$HOME`).
-    dst: PathBuf,
+    /// Files to adopt, at their deployed location. Omit to adopt the edits
+    /// of every changed deployed file.
+    paths: Vec<PathBuf>,
 
-    /// Override the auto-derived repo-relative source path.
-    ///
-    /// Required when `<dst>` is not under `$HOME`.
+    /// Repo-relative source path for a new file, instead of its path under
+    /// `$HOME`. Required for a new file outside `$HOME`; takes exactly one
+    /// PATH.
     #[arg(long)]
     src: Option<PathBuf>,
 
-    /// Override the default repo path (`${XDG_CONFIG}/krypt/repo`).
+    /// The dotfiles repo. Defaults to the directory of `.krypt.toml` in the
+    /// current directory, else the repo `krypt init` recorded.
     #[arg(long)]
     repo_path: Option<PathBuf>,
 
@@ -300,26 +301,11 @@ struct AdoptArgs {
     #[arg(long)]
     manifest: Option<PathBuf>,
 
-    /// Overwrite an existing file at `<repo>/<src>` without erroring.
+    /// Overwrite a file already in the repo when importing a new file.
     #[arg(long)]
     force: bool,
 
-    /// Print the `[[link]]` suggestion without touching disk.
-    #[arg(long)]
-    dry_run: bool,
-}
-
-#[derive(clap::Args, Debug)]
-struct AdoptEditsArgs {
-    /// Override the manifest path (`${XDG_STATE}/krypt/manifest.json`).
-    #[arg(long)]
-    manifest: Option<PathBuf>,
-
-    /// Override the default repo path (`${XDG_CONFIG}/krypt/repo`).
-    #[arg(long)]
-    repo_path: Option<PathBuf>,
-
-    /// Print what would be synced without touching disk.
+    /// Print what would be adopted without touching disk.
     #[arg(long)]
     dry_run: bool,
 }
@@ -349,9 +335,10 @@ struct DoctorArgs {
 
 #[derive(clap::Args, Debug)]
 struct DepsArgs {
-    /// Path to `.krypt.toml`. Defaults to `.krypt.toml` in the current directory.
-    #[arg(long, default_value = ".krypt.toml")]
-    config: PathBuf,
+    /// Path to `.krypt.toml`. Defaults to `.krypt.toml` in the current
+    /// directory, else the repo `krypt init` recorded.
+    #[arg(long)]
+    config: Option<PathBuf>,
 
     /// Override the detected package manager (e.g. `apt`, `pacman`).
     #[arg(long)]
@@ -389,18 +376,18 @@ struct NotifyArgs {
     backend: Option<String>,
 
     /// Path to `.krypt.toml` to read `[meta] notify_backend` from.
-    /// Defaults to `.krypt.toml` in the current directory; silently ignored
-    /// if the file does not exist.
-    #[arg(long, default_value = ".krypt.toml")]
-    config: PathBuf,
+    /// Defaults to `.krypt.toml` in the current directory, else the repo
+    /// `krypt init` recorded; silently ignored if the file does not exist.
+    #[arg(long)]
+    config: Option<PathBuf>,
 }
 
 #[derive(clap::Args, Debug)]
 struct SetupArgs {
-    /// Path to `.krypt.toml`. Defaults to `.krypt.toml` in CWD; falls back to
-    /// the repo path from the tool config if present.
-    #[arg(long, default_value = ".krypt.toml")]
-    config: PathBuf,
+    /// Path to `.krypt.toml`. Defaults to `.krypt.toml` in the current
+    /// directory, else the repo `krypt init` recorded.
+    #[arg(long)]
+    config: Option<PathBuf>,
 
     /// Run only the comma-separated list of `[prompts.<name>]` sections.
     /// If omitted, all sections are run in BTreeMap order.
@@ -419,9 +406,10 @@ struct SetupArgs {
 
 #[derive(clap::Args, Debug)]
 struct DeployArgs {
-    /// Path to `.krypt.toml`. Defaults to `.krypt.toml` in the cwd.
-    #[arg(long, default_value = ".krypt.toml")]
-    config: PathBuf,
+    /// Path to `.krypt.toml`. Defaults to `.krypt.toml` in the current
+    /// directory, else the repo `krypt init` recorded.
+    #[arg(long)]
+    config: Option<PathBuf>,
 
     /// Manifest path. Defaults to `${XDG_STATE}/krypt/manifest.json`.
     #[arg(long)]
@@ -518,7 +506,6 @@ fn main() -> Result<ExitCode> {
         Some(Command::Init(args)) => cmd_init(args),
         Some(Command::Update(args)) => cmd_update(args),
         Some(Command::Adopt(args)) => cmd_adopt(args),
-        Some(Command::AdoptEdits(args)) => cmd_adopt_edits(args),
         Some(Command::Setup(args)) => cmd_setup(args),
         Some(Command::Doctor(args)) => cmd_doctor(args),
         Some(Command::Deps(args)) => cmd_deps(args),
@@ -538,23 +525,7 @@ fn cmd_version() -> Result<ExitCode> {
 }
 
 fn cmd_setup(args: SetupArgs) -> Result<ExitCode> {
-    // Resolve config path: CLI arg first, then tool config repo, then CWD default.
-    let config_path = if args.config.exists() {
-        args.config.clone()
-    } else {
-        let tc_path = ToolConfig::default_path()
-            .map_err(|e| color_eyre::eyre::eyre!("resolving tool config path: {e}"))?;
-        if let Ok(Some(tc)) = ToolConfig::load(&tc_path) {
-            let repo_cfg = tc.repo.path.join(".krypt.toml");
-            if repo_cfg.exists() {
-                repo_cfg
-            } else {
-                args.config.clone()
-            }
-        } else {
-            args.config.clone()
-        }
-    };
+    let config_path = resolve_config(args.config)?;
 
     let cfg = krypt_core::include::load_with_includes(&config_path)
         .map_err(|e| color_eyre::eyre::eyre!("loading config: {e}"))?;
@@ -645,7 +616,8 @@ fn cmd_setup(args: SetupArgs) -> Result<ExitCode> {
     }
 }
 
-fn cmd_validate(path: PathBuf) -> Result<ExitCode> {
+fn cmd_validate(path: Option<PathBuf>) -> Result<ExitCode> {
+    let path = resolve_config(path)?;
     match krypt_core::include::load_with_includes(&path) {
         Ok(_) => {
             println!("✓ {} parsed and validated successfully", path.display());
@@ -658,9 +630,10 @@ fn cmd_validate(path: PathBuf) -> Result<ExitCode> {
     }
 }
 
-fn cmd_paths(config: PathBuf, no_config: bool) -> Result<ExitCode> {
+fn cmd_paths(config: Option<PathBuf>, no_config: bool) -> Result<ExitCode> {
     let mut resolver = Resolver::new();
 
+    let config = resolve_config(config)?;
     if !no_config && config.exists() {
         match krypt_core::include::load_with_includes(&config) {
             Ok(cfg) => {
@@ -743,6 +716,50 @@ fn default_manifest_path() -> Result<PathBuf> {
         .resolve_var("XDG_STATE")
         .map_err(|e| color_eyre::eyre::eyre!("resolving XDG_STATE: {e}"))?;
     Ok(PathBuf::from(state).join("krypt").join("manifest.json"))
+}
+
+/// The config file every command reads, in the repo root.
+const CONFIG_FILE: &str = ".krypt.toml";
+
+/// The `.krypt.toml` a command reads: `flag` when given; else `.krypt.toml` in
+/// the current directory, so a command run inside a dotfiles checkout uses
+/// that checkout; else the one in the repo `krypt init` recorded in the tool
+/// config. When neither exists, `.krypt.toml` in the current directory, for
+/// the command's own "not found" error to name.
+fn resolve_config(flag: Option<PathBuf>) -> Result<PathBuf> {
+    if let Some(path) = flag {
+        return Ok(path);
+    }
+    let here = PathBuf::from(CONFIG_FILE);
+    if here.exists() {
+        return Ok(here);
+    }
+    let tc_path = ToolConfig::default_path()
+        .map_err(|e| color_eyre::eyre::eyre!("resolving tool config path: {e}"))?;
+    let recorded = ToolConfig::load(&tc_path)
+        .map_err(|e| color_eyre::eyre::eyre!("reading tool config: {e}"))?
+        .map(|tc| tc.repo.path.join(CONFIG_FILE))
+        .filter(|path| path.exists());
+    Ok(recorded.unwrap_or(here))
+}
+
+/// The dotfiles repo root: `flag` when given, else the directory holding the
+/// `.krypt.toml` [`resolve_config`] finds. Errors when there is none, rather
+/// than guessing a directory to write into.
+fn resolve_repo(flag: Option<PathBuf>) -> Result<PathBuf> {
+    if let Some(path) = flag {
+        return Ok(path);
+    }
+    let config = resolve_config(None)?;
+    if !config.exists() {
+        color_eyre::eyre::bail!(
+            "no dotfiles repo found: no {CONFIG_FILE} in the current directory and none \
+             recorded by `krypt init`; pass --repo-path"
+        );
+    }
+    let config = std::path::absolute(&config)
+        .map_err(|e| color_eyre::eyre::eyre!("resolving {}: {e}", config.display()))?;
+    Ok(config.parent().map(Path::to_path_buf).unwrap_or(config))
 }
 
 fn default_repo_path() -> Result<PathBuf> {
@@ -860,7 +877,7 @@ fn deploy_opts_from(args: &DeployArgs) -> Result<DeployOpts> {
         None => default_manifest_path()?,
     };
     Ok(DeployOpts {
-        config_path: args.config.clone(),
+        config_path: resolve_config(args.config.clone())?,
         manifest_path,
         platform: args.platform.map(Into::into),
         dry_run: args.dry_run,
@@ -967,93 +984,132 @@ fn print_hook_summary(h: &HookSummary) {
 }
 
 fn cmd_adopt(args: AdoptArgs) -> Result<ExitCode> {
-    let repo_path = match args.repo_path {
-        Some(p) => p,
-        None => default_repo_path()?,
-    };
+    let repo_path = resolve_repo(args.repo_path)?;
     let manifest_path = match args.manifest {
         Some(p) => p,
         None => default_manifest_path()?,
     };
+    let paths = args
+        .paths
+        .iter()
+        .map(|p| {
+            std::path::absolute(p)
+                .map_err(|e| color_eyre::eyre::eyre!("resolving {}: {e}", p.display()))
+        })
+        .collect::<Result<Vec<_>>>()?;
 
-    let opts = AdoptOpts {
-        dst: args.dst,
-        src_override: args.src,
-        repo_path,
-        manifest_path,
-        force: args.force,
+    // `--src` names the source of one new file; check before anything is copied.
+    if args.src.is_some() {
+        let [path] = paths.as_slice() else {
+            eprintln!("error: --src takes exactly one PATH, got {}", paths.len());
+            return Ok(ExitCode::from(2));
+        };
+        let deployed = Manifest::load(&manifest_path)
+            .map_err(color_eyre::eyre::Report::msg)?
+            .is_some_and(|m| m.entries.keys().any(|dst| same_path(dst, path)));
+        if deployed {
+            eprintln!(
+                "error: --src is for a new file; {} is already deployed from the repo",
+                path.display()
+            );
+            return Ok(ExitCode::from(2));
+        }
+    }
+
+    let edits = match adopt_edits(&AdoptEditsOpts {
+        manifest_path: manifest_path.clone(),
+        repo_path: repo_path.clone(),
+        only: paths.clone(),
         dry_run: args.dry_run,
-        resolver: Resolver::new(),
+    }) {
+        Ok(report) => report,
+        Err(e) => {
+            eprintln!("error: {e}");
+            return Ok(ExitCode::from(1));
+        }
     };
 
-    match adopt(&opts) {
-        Ok(report) => {
-            println!("{}", report.link_suggestion);
-            if args.dry_run {
-                println!("\n(dry-run: no files written)");
-            } else {
-                println!("\nadopted: {:?} -> repo:{:?}", report.dst, report.src);
+    let verb = if args.dry_run {
+        "would adopt"
+    } else {
+        "adopted"
+    };
+    for a in &edits.adopted {
+        println!(
+            "{verb} edits: {} -> repo:{}",
+            a.dst.display(),
+            a.src.display()
+        );
+    }
+    if edits.templates_skipped > 0 {
+        println!(
+            "left alone: {} changed [[template]] destination(s); name one to adopt it",
+            edits.templates_skipped
+        );
+    }
+    if edits.missing > 0 {
+        println!("missing on disk: {}", edits.missing);
+    }
+    if paths.is_empty() || edits.clean > 0 {
+        println!("unchanged: {}", edits.clean);
+    }
+
+    let mut code = ExitCode::SUCCESS;
+    for dst in edits.unmatched {
+        let opts = AdoptOpts {
+            dst,
+            src_override: args.src.clone(),
+            repo_path: repo_path.clone(),
+            manifest_path: manifest_path.clone(),
+            force: args.force,
+            dry_run: args.dry_run,
+            resolver: Resolver::new(),
+        };
+        match adopt(&opts) {
+            Ok(report) => {
+                println!("\n{}", report.link_suggestion);
+                if args.dry_run {
+                    println!("\n(dry-run: no files written)");
+                } else {
+                    println!("\nimported: {:?} -> repo:{:?}", report.dst, report.src);
+                }
             }
-            Ok(ExitCode::SUCCESS)
+            Err(e) => code = adopt_error(e),
         }
-        Err(AdoptError::DstMissing(p)) => {
-            eprintln!("error: dst does not exist: {}", p.display());
-            Ok(ExitCode::from(1))
+    }
+    Ok(code)
+}
+
+/// Print why importing a new file failed and return the exit code for it.
+fn adopt_error(e: AdoptError) -> ExitCode {
+    match e {
+        AdoptError::DstMissing(p) => {
+            eprintln!("error: does not exist: {}", p.display());
+            ExitCode::from(1)
         }
-        Err(AdoptError::OutsideHome { dst }) => {
+        AdoptError::OutsideHome { dst } => {
             eprintln!(
                 "error: {} is outside $HOME; provide --src <rel> to name the repo-relative path",
                 dst.display()
             );
-            Ok(ExitCode::from(2))
+            ExitCode::from(2)
         }
-        Err(AdoptError::RepoCollision { src }) => {
+        AdoptError::RepoCollision { src } => {
             eprintln!(
                 "error: repo already has {}; use --force to overwrite, or --src to pick a different name",
                 src.display()
             );
-            Ok(ExitCode::from(1))
+            ExitCode::from(1)
         }
-        Err(e) => {
+        e => {
             eprintln!("error: {e}");
-            Ok(ExitCode::from(1))
-        }
-    }
-}
-
-fn cmd_adopt_edits(args: AdoptEditsArgs) -> Result<ExitCode> {
-    let repo_path = match args.repo_path {
-        Some(p) => p,
-        None => default_repo_path()?,
-    };
-    let manifest_path = match args.manifest {
-        Some(p) => p,
-        None => default_manifest_path()?,
-    };
-
-    let opts = AdoptEditsOpts {
-        manifest_path,
-        repo_path,
-        dry_run: args.dry_run,
-    };
-
-    match adopt_edits(&opts) {
-        Ok(report) => {
-            println!(
-                "adopted edits for {} entries ({} clean, {} missing)",
-                report.adopted, report.clean, report.missing
-            );
-            Ok(ExitCode::SUCCESS)
-        }
-        Err(e) => {
-            eprintln!("error: {e}");
-            Ok(ExitCode::from(1))
+            ExitCode::from(1)
         }
     }
 }
 
 fn cmd_deps(args: DepsArgs) -> Result<ExitCode> {
-    let config = krypt_core::include::load_with_includes(&args.config)
+    let config = krypt_core::include::load_with_includes(&resolve_config(args.config)?)
         .map_err(|e| color_eyre::eyre::eyre!("loading config: {e}"))?;
 
     let current_platform = Platform::current().as_str();
@@ -1202,24 +1258,8 @@ fn cmd_doctor(args: DoctorArgs) -> Result<ExitCode> {
     })
 }
 
-fn resolve_menu_config(args_config: Option<PathBuf>) -> Result<PathBuf> {
-    if let Some(p) = args_config {
-        return Ok(p);
-    }
-    // Try tool config's repo path first.
-    let tc_path = ToolConfig::default_path()
-        .map_err(|e| color_eyre::eyre::eyre!("resolving tool config path: {e}"))?;
-    if let Ok(Some(tc)) = ToolConfig::load(&tc_path) {
-        let repo_cfg = tc.repo.path.join(".krypt.toml");
-        if repo_cfg.exists() {
-            return Ok(repo_cfg);
-        }
-    }
-    Ok(PathBuf::from(".krypt.toml"))
-}
-
 fn cmd_menu(args: MenuArgs) -> Result<ExitCode> {
-    let config_path = resolve_menu_config(args.config)?;
+    let config_path = resolve_config(args.config)?;
 
     let opts = DispatchOpts {
         config_path,
@@ -1338,7 +1378,7 @@ fn cmd_external(args: Vec<String>) -> Result<ExitCode> {
         }
     }
 
-    let config_path = resolve_menu_config(config)?;
+    let config_path = resolve_config(config)?;
     let opts = DispatchOpts {
         config_path,
         args: positional,
@@ -1621,10 +1661,11 @@ fn cmd_battery_clear(log_path: &Path) -> Result<ExitCode> {
 
 fn cmd_notify(args: NotifyArgs) -> Result<ExitCode> {
     // Precedence: --backend flag > [meta] notify_backend > auto-detect.
+    let config = resolve_config(args.config.clone())?;
     let override_name: Option<String> = if args.backend.is_some() {
         args.backend.clone()
-    } else if args.config.exists() {
-        krypt_core::include::load_with_includes(&args.config)
+    } else if config.exists() {
+        krypt_core::include::load_with_includes(&config)
             .ok()
             .and_then(|c| c.meta.notify_backend)
     } else {

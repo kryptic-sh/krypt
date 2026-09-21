@@ -21,8 +21,34 @@ patch bumps.
   An entry whose bucket cannot be added is reported failed (missing under
   `--check`) instead of being passed to scoop.
 
+### Changed
+
+- Every command that reads `.krypt.toml` finds it the same way: `--config` when
+  given, else `.krypt.toml` in the current directory, else the repo `krypt init`
+  recorded in the tool config. `link`, `relink`, `deps`, `validate`, `paths` and
+  `notify` used only the current directory, so they failed outside the repo;
+  `setup` already worked this way; `menu` and `krypt <group> <name>` preferred
+  the recorded repo over the current directory and now prefer the current
+  directory.
+- `krypt adopt` and `krypt adopt-edits` are one command. `krypt adopt` with no
+  paths copies the edits of every changed deployed file back to the repo, as
+  `adopt-edits` did; `krypt adopt <path>...` adopts the edits of each named file
+  krypt deployed and imports each other one as a new repo file, printing its
+  `[[link]]` block, as `adopt <path>` did for one file. `adopt-edits` remains an
+  alias. `--src` still names a new file's source and takes exactly one path.
+- `krypt adopt` with no paths leaves changed `[[template]]` destinations alone
+  and says how many: they hold per-machine values (a git identity) that
+  `adopt-edits` copied over the committed template. Naming one adopts it.
+
 ### Fixed
 
+- `krypt adopt` and `krypt adopt-edits` always wrote into
+  `${XDG_CONFIG}/krypt/repo`, ignoring the repo the tool config recorded, and
+  created that directory when the repo lived elsewhere. They now use the repo
+  every other command finds (see Changed) and refuse, naming `--repo-path`, when
+  there is none.
+- `krypt adopt --dry-run` printed "adopted edits for N entries"; it now says
+  "would adopt" per file.
 - `krypt deps` with scoop installed nothing: scoop exits 0 and
   `scoop list <app>` always prints a header, so every app counted as installed.
   Scoop exits 0 for failures too (an unknown app, a failed bucket add), so
@@ -42,6 +68,11 @@ patch bumps.
   `scoop_buckets`.
 - `krypt_pkg::manager::MockRunner::with` registered for a call it already has
   now queues a second response instead of replacing the first.
+- `krypt_core::adopt::AdoptEditsOpts` has a new field `only`, and
+  `AdoptEditsReport::adopted` is a `Vec<Adopted>` instead of a count, with new
+  fields `templates_skipped` and `unmatched`.
+- `krypt menu` and `krypt <group> <name>` read `.krypt.toml` in the current
+  directory before the recorded repo's.
 
 ## [0.3.0] - 2026-09-19
 
