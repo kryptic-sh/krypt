@@ -10,6 +10,13 @@ patch bumps.
 
 ### Fixed
 
+- The release binary now builds against `rustls` 0.23.46, which fixes
+  RUSTSEC-2026-0346 (`Debug` output exposing TLS secrets), RUSTSEC-2026-0347
+  (data sent to the outer server after an ECH rejection), RUSTSEC-2026-0348
+  (Brotli certificate decompression allocating up to 1 GiB before
+  authentication) and RUSTSEC-2026-0349 (a ServerHello downgrading later
+  connections to classical key exchange) in the HTTPS transport `krypt init` /
+  `krypt update` use.
 - **The Homebrew formula loads on Homebrew 7.** Homebrew now loads every formula
   in a tap for each OS and architecture when it taps it, and this one only had
   its URLs under `on_macos`, so `brew tap kryptic-sh/tap` failed with "invalid
