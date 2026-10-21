@@ -80,6 +80,25 @@ removes the deployed copy. Seen in the mxaddict dotfiles after the Windows mpv
 link was dropped. Options: `link` prunes entries no config entry produces any
 more (and offers to delete their files), or a `krypt forget <path>`.
 
+### A destination already equal to its source counts as a conflict
+
+`narrow_conflicts` in `deploy.rs` promotes a `Conflict` to a `Copy` only when
+the destination's hash matches the manifest's recorded `hash_dst`. It never
+compares the destination with the source, so a file that already holds exactly
+the source's content, but not what krypt last wrote, is skipped as a conflict on
+every `link` and `update` until someone passes `--force`. Nothing would be lost
+by writing it, and once skipped, later source changes to that file stop
+deploying too. `krypt diff` reports these as `drifted`.
+
+Seen on the mxaddict dotfiles' Arch machine (2026-10-21): 11 of 16 drifted
+destinations were byte-identical to their source. For the `~/.local/bin` ones
+the cause is known: that directory is a symlink into an older `~/.files` clone
+of the same repo, so `git pull` there writes the new content before krypt does.
+What wrote the others (`config.fish`, `starship.toml`, `.gitconfig`, ...) was
+not found. Fix: when the destination's hash equals the source's, treat it as
+idempotent and re-record the manifest entry; `diff` could also report it as
+clean rather than `drifted`.
+
 ### `file://` clones need `git-upload-pack` on `PATH`
 
 gix's local transport spawns `git-upload-pack`, so `krypt init <file://...>`
