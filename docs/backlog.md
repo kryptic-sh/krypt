@@ -91,13 +91,22 @@ by writing it, and once skipped, later source changes to that file stop
 deploying too. `krypt diff` reports these as `drifted`.
 
 Seen on the mxaddict dotfiles' Arch machine (2026-10-21): 11 of 16 drifted
-destinations were byte-identical to their source. For the `~/.local/bin` ones
-the cause is known: that directory is a symlink into an older `~/.files` clone
-of the same repo, so `git pull` there writes the new content before krypt does.
-What wrote the others (`config.fish`, `starship.toml`, `.gitconfig`, ...) was
-not found. Fix: when the destination's hash equals the source's, treat it as
-idempotent and re-record the manifest entry; `diff` could also report it as
-clean rather than `drifted`.
+destinations were byte-identical to their source. Every one of them sat behind a
+symlink into an older `~/.files` clone of the same repo (`~/.local/bin`,
+`~/.config/fish`, `~/.config/starship.toml`, `~/.gitconfig`, ...), so
+`git pull` there wrote the new content before krypt did.
+
+The same check also keeps a destination out of the manifest entirely: one that
+already matched its source on the first deploy was skipped as a conflict and
+never recorded. `krypt diff` walks only the manifest, so it does not list these
+at all, and `link` counts them in "conflicts skipped" without naming them. On
+the same machine (2026-10-22), after those symlinks were replaced with real
+files, 6 of the 22 skipped conflicts were such unrecorded destinations
+(`~/.claude/settings.json`, `~/.claude/statusline-command.sh`, ...).
+
+Fix: when the destination's hash equals the source's, treat it as idempotent and
+(re-)record the manifest entry; `diff` could also report it as clean rather than
+`drifted`. Separately, `link` could name the destinations it skips.
 
 ### `file://` clones need `git-upload-pack` on `PATH`
 
