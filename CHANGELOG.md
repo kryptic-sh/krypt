@@ -8,6 +8,8 @@ patch bumps.
 
 ## [Unreleased]
 
+## [0.4.3] - 2026-10-22
+
 ### Fixed
 
 - The HTTPS transport `krypt init` / `krypt update` use now builds against
