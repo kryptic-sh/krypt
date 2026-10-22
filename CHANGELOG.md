@@ -10,6 +10,10 @@ patch bumps.
 
 ### Fixed
 
+- The HTTPS transport `krypt init` / `krypt update` use now builds against
+  `rustls-webpki` 0.103.16 and `webpki-root-certs` 1.0.10, which fix
+  RUSTSEC-2026-0382 and RUSTSEC-2026-0383: certificate verification could
+  accept intermediates from the distrusted emSign roots.
 - **`krypt link` and `krypt update` no longer skip a destination that already
   matches its source.** A file holding exactly the bytes krypt would write, but
   not the hash it last recorded (or never recorded at all), counted as a
