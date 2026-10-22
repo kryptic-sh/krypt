@@ -80,34 +80,6 @@ removes the deployed copy. Seen in the mxaddict dotfiles after the Windows mpv
 link was dropped. Options: `link` prunes entries no config entry produces any
 more (and offers to delete their files), or a `krypt forget <path>`.
 
-### A destination already equal to its source counts as a conflict
-
-`narrow_conflicts` in `deploy.rs` promotes a `Conflict` to a `Copy` only when
-the destination's hash matches the manifest's recorded `hash_dst`. It never
-compares the destination with the source, so a file that already holds exactly
-the source's content, but not what krypt last wrote, is skipped as a conflict on
-every `link` and `update` until someone passes `--force`. Nothing would be lost
-by writing it, and once skipped, later source changes to that file stop
-deploying too. `krypt diff` reports these as `drifted`.
-
-Seen on the mxaddict dotfiles' Arch machine (2026-10-21): 11 of 16 drifted
-destinations were byte-identical to their source. Every one of them sat behind a
-symlink into an older `~/.files` clone of the same repo (`~/.local/bin`,
-`~/.config/fish`, `~/.config/starship.toml`, `~/.gitconfig`, ...), so
-`git pull` there wrote the new content before krypt did.
-
-The same check also keeps a destination out of the manifest entirely: one that
-already matched its source on the first deploy was skipped as a conflict and
-never recorded. `krypt diff` walks only the manifest, so it does not list these
-at all, and `link` counts them in "conflicts skipped" without naming them. On
-the same machine (2026-10-22), after those symlinks were replaced with real
-files, 6 of the 22 skipped conflicts were such unrecorded destinations
-(`~/.claude/settings.json`, `~/.claude/statusline-command.sh`, ...).
-
-Fix: when the destination's hash equals the source's, treat it as idempotent and
-(re-)record the manifest entry; `diff` could also report it as clean rather than
-`drifted`. Separately, `link` could name the destinations it skips.
-
 ### `file://` clones need `git-upload-pack` on `PATH`
 
 gix's local transport spawns `git-upload-pack`, so `krypt init <file://...>`
@@ -119,6 +91,14 @@ from winget's git to scoop's. Options: find `git-upload-pack` next to the `git`
 on `PATH` (following a scoop shim), or document it. HTTPS clones are unaffected.
 
 ## Deferred
+
+### `link` does not name the conflicts it skips
+
+`krypt link` and `krypt update` print only a count ("conflicts skipped: N"), so
+finding which destinations those are means re-deriving every entry's
+destination by hand. `krypt diff` does not help for a destination krypt never
+recorded, since it walks only the manifest. Listing each skipped `dst` (at
+least under `--dry-run`) would make the count actionable.
 
 ### Battery reading on macOS and Windows
 

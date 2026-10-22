@@ -10,6 +10,12 @@ patch bumps.
 
 ### Fixed
 
+- **`krypt link` and `krypt update` no longer skip a destination that already
+  matches its source.** A file holding exactly the bytes krypt would write, but
+  not the hash it last recorded (or never recorded at all), counted as a
+  conflict on every run, so later changes to its source never deployed and
+  `krypt diff` kept reporting it as `drifted` without `--force`. Such files are
+  now re-deployed and recorded in the manifest.
 - The release binary now builds against `rustls` 0.23.46, which fixes
   RUSTSEC-2026-0346 (`Debug` output exposing TLS secrets), RUSTSEC-2026-0347
   (data sent to the outer server after an ECH rejection), RUSTSEC-2026-0348

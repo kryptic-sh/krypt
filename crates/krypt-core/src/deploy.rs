@@ -12,8 +12,9 @@
 //! 6. **Narrow conflicts**: for each [`Action::Conflict`] in the plan,
 //!    check the manifest — if the recorded `hash_dst` matches the
 //!    current file on disk, the destination is "ours" and a re-deploy
-//!    is safe; promote to a [`Action::Copy`]. If `force` is set,
-//!    promote everything.
+//!    is safe; promote to a [`Action::Copy`]. Same if the file on disk
+//!    already equals the source, whatever the manifest says. If `force`
+//!    is set, promote everything.
 //! 7. Execute the plan.
 //! 8. Update the manifest with what was written, save atomically.
 //!
@@ -94,9 +95,9 @@ pub struct LinkReport {
     pub written: usize,
     /// Conflicts surfaced + skipped because `force` was off.
     pub conflicts_skipped: usize,
-    /// Manifest-tracked re-deploys whose dst hash matched the recorded
-    /// one (so we overwrote silently with the same bytes — true
-    /// idempotency).
+    /// Re-deploys over a destination that was safe to overwrite: its hash
+    /// matched the manifest's recorded one, or it already held the
+    /// source's bytes.
     pub idempotent_rewrites: usize,
     /// Conflicts skipped because the user-supplied `--platform` filter
     /// excluded them. Always 0 today (the planner already filters); kept
@@ -259,9 +260,14 @@ fn narrow_conflicts(
                     });
                     continue;
                 }
-                if let Some(entry) = manifest.entries.get(dst)
-                    && hash_matches_recorded(dst, &entry.hash_dst)
-                {
+                let ours = manifest
+                    .entries
+                    .get(dst)
+                    .is_some_and(|entry| hash_matches_recorded(dst, &entry.hash_dst));
+                // A destination that already holds the source's bytes loses
+                // nothing by being written, and writing it records it, so a
+                // later source change deploys instead of conflicting forever.
+                if ours || same_content(src, dst) {
                     out.push(Action::Copy {
                         src: src.clone(),
                         dst: dst.clone(),
@@ -281,6 +287,14 @@ fn hash_matches_recorded(dst: &Path, recorded: &str) -> bool {
     match hash_file(dst) {
         Ok(actual) => actual == recorded,
         Err(_) => false,
+    }
+}
+
+/// Whether `dst` already holds exactly the bytes of `src`.
+fn same_content(src: &Path, dst: &Path) -> bool {
+    match (hash_file(src), hash_file(dst)) {
+        (Ok(s), Ok(d)) => s == d,
+        _ => false,
     }
 }
 
@@ -450,6 +464,81 @@ dst = "${{HOME}}/a"
         let r = link(&opts(cfg_path, manifest_path, true)).unwrap();
         assert_eq!(r.written, 1);
         assert_eq!(fs::read(home.path().join("a")).unwrap(), b"repo wrote this");
+    }
+
+    #[test]
+    fn link_untracked_dst_equal_to_src_is_written_and_recorded() {
+        let repo = tempdir().unwrap();
+        let home = tempdir().unwrap();
+        let state = tempdir().unwrap();
+
+        // Pre-existing file at dst, NOT in our manifest, but already
+        // holding exactly what the repo would write.
+        fs::write(home.path().join("a"), b"same bytes").unwrap();
+
+        let cfg_text = format!(
+            r#"
+[paths]
+HOME = "{home}"
+
+[[link]]
+src = "a"
+dst = "${{HOME}}/a"
+"#,
+            home = toml_path(home.path())
+        );
+        let cfg_path = synth_repo(repo.path(), &[("a", b"same bytes")]);
+        fs::write(&cfg_path, cfg_text).unwrap();
+
+        let manifest_path = state.path().join("manifest.json");
+        let r = link(&opts(cfg_path.clone(), manifest_path.clone(), false)).unwrap();
+        assert_eq!(r.conflicts_skipped, 0);
+        assert_eq!(r.idempotent_rewrites, 1);
+        assert_eq!(r.written, 1);
+        let m = Manifest::load(&manifest_path).unwrap().unwrap();
+        assert!(m.entries.contains_key(&home.path().join("a")));
+
+        // Now recorded, so the next source change deploys.
+        fs::write(repo.path().join("a"), b"v2").unwrap();
+        let r = link(&opts(cfg_path, manifest_path, false)).unwrap();
+        assert_eq!(r.conflicts_skipped, 0);
+        assert_eq!(fs::read(home.path().join("a")).unwrap(), b"v2");
+    }
+
+    #[test]
+    fn link_drifted_dst_equal_to_src_is_rerecorded() {
+        let repo = tempdir().unwrap();
+        let home = tempdir().unwrap();
+        let state = tempdir().unwrap();
+
+        let cfg_text = format!(
+            r#"
+[paths]
+HOME = "{home}"
+
+[[link]]
+src = "a"
+dst = "${{HOME}}/a"
+"#,
+            home = toml_path(home.path())
+        );
+        let cfg_path = synth_repo(repo.path(), &[("a", b"v1")]);
+        fs::write(&cfg_path, cfg_text).unwrap();
+        let manifest_path = state.path().join("manifest.json");
+        link(&opts(cfg_path.clone(), manifest_path.clone(), false)).unwrap();
+
+        // The source moves on and something other than krypt writes the
+        // new bytes into dst first, so dst no longer matches the
+        // recorded hash but does match the source.
+        fs::write(repo.path().join("a"), b"v2").unwrap();
+        fs::write(home.path().join("a"), b"v2").unwrap();
+
+        let r = link(&opts(cfg_path, manifest_path.clone(), false)).unwrap();
+        assert_eq!(r.conflicts_skipped, 0);
+        assert_eq!(r.written, 1);
+        let m = Manifest::load(&manifest_path).unwrap().unwrap();
+        let entry = &m.entries[&home.path().join("a")];
+        assert_eq!(entry.hash_dst, hash_file(&home.path().join("a")).unwrap());
     }
 
     #[test]
