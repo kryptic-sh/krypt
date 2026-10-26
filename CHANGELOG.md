@@ -8,6 +8,16 @@ patch bumps.
 
 ## [Unreleased]
 
+### Fixed
+
+- **`krypt link` and `krypt update` forget files the config no longer
+  deploys.** Removing a `[[link]]` or `[[template]]`, or deleting a file a
+  `src_glob` matched, left its entry in the manifest forever, so `krypt diff` kept listing it and
+  its deployed copy stayed behind. Such entries are now pruned: a copy still as
+  krypt wrote it is deleted, one you edited is left in place, and the report
+  counts both (`pruned: N (removed …, kept … edited, … already gone)`).
+  `--dry-run` only counts, and a `--platform` override prunes nothing.
+
 ## [0.4.3] - 2026-10-22
 
 ### Fixed

@@ -100,9 +100,14 @@ enum Command {
 
     /// Deploy every entry in `.krypt.toml`. Idempotent.
     ///
-    /// Re-deploys files whose destination matches the manifest hash
-    /// silently. Conflicts (destinations with content not tracked by the
-    /// manifest) are skipped unless `--force` is set.
+    /// Re-deploys files whose destination matches the manifest hash, or
+    /// already holds the source's content, silently. Conflicts
+    /// (destinations with any other content) are skipped unless `--force`
+    /// is set.
+    ///
+    /// Manifest entries the config no longer produces are pruned: a file
+    /// still as krypt wrote it is deleted, an edited one is left in place.
+    /// Not done when `--platform` overrides the host.
     Link(DeployArgs),
 
     /// Remove every file recorded in the manifest.
@@ -950,6 +955,14 @@ fn print_link_report(r: &LinkReport, dry_run: bool) {
     println!("  {verb}: {}", r.written);
     if r.idempotent_rewrites > 0 {
         println!("  idempotent re-deploys: {}", r.idempotent_rewrites);
+    }
+    let pruned = r.pruned_removed + r.pruned_kept + r.pruned_missing;
+    if pruned > 0 {
+        let verb = if dry_run { "would prune" } else { "pruned" };
+        println!(
+            "  {verb}: {pruned} (removed {}, kept {} edited, {} already gone)",
+            r.pruned_removed, r.pruned_kept, r.pruned_missing
+        );
     }
     if r.conflicts_skipped > 0 {
         println!(

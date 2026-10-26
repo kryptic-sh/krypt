@@ -16,7 +16,12 @@
 //!    already equals the source, whatever the manifest says. If `force`
 //!    is set, promote everything.
 //! 7. Execute the plan.
-//! 8. Update the manifest with what was written, save atomically.
+//! 8. **Prune**: forget every manifest entry the plan no longer
+//!    produces (its entry was removed, or a `src_glob` stopped matching it). A
+//!    destination still holding what krypt wrote is deleted, one edited
+//!    since is left on disk. Skipped when `platform` overrides the host,
+//!    since the plan then describes another machine.
+//! 9. Update the manifest with what was written, save atomically.
 //!
 //! `unlink` is the inverse: iterate the manifest, hash each `dst`,
 //! delete only entries that still match the recorded hash (i.e.
@@ -24,7 +29,7 @@
 //!
 //! `relink` = unlink + link.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -33,7 +38,7 @@ use thiserror::Error;
 use crate::config::{Config, ConfigError};
 use crate::copy::{Action, ExecError, ExecOpts, PlanError, Report, execute as execute_plan, plan};
 use crate::manifest::{
-    DriftStatus, Manifest, ManifestEntry, ManifestError, detect_drift, hash_file,
+    DriftStatus, Manifest, ManifestEntry, ManifestError, detect_drift, entry_drift, hash_file,
 };
 use crate::paths::{Platform, Resolver};
 
@@ -103,6 +108,14 @@ pub struct LinkReport {
     /// excluded them. Always 0 today (the planner already filters); kept
     /// for forward compat with cross-platform planning.
     pub platform_skipped: usize,
+    /// Destinations the config no longer produces, deleted because they
+    /// still held what krypt last wrote.
+    pub pruned_removed: usize,
+    /// Destinations the config no longer produces, left on disk because
+    /// they were edited since krypt wrote them. krypt stops tracking them.
+    pub pruned_kept: usize,
+    /// Destinations the config no longer produces that were already gone.
+    pub pruned_missing: usize,
 }
 
 /// Summary returned by [`unlink`].
@@ -150,6 +163,11 @@ pub fn link(opts: &DeployOpts) -> Result<LinkReport, DeployError> {
         }
     }
 
+    let mut pruned = Pruned::default();
+    if opts.platform.is_none_or(|p| p == Platform::current()) {
+        pruned = prune(&raw_plan, &mut manifest, opts.dry_run)?;
+    }
+
     if !opts.dry_run {
         for w in &report.written {
             if let (Some(hash_src), Some(hash_dst)) = (&w.hash_src, &w.hash_dst) {
@@ -176,6 +194,9 @@ pub fn link(opts: &DeployOpts) -> Result<LinkReport, DeployError> {
         conflicts_skipped,
         idempotent_rewrites: idempotent,
         platform_skipped: 0,
+        pruned_removed: pruned.removed,
+        pruned_kept: pruned.kept,
+        pruned_missing: pruned.missing,
     })
 }
 
@@ -281,6 +302,50 @@ fn narrow_conflicts(
         }
     }
     (crate::copy::Plan { actions: out }, idempotent)
+}
+
+/// What [`prune`] did with each entry it forgot.
+#[derive(Debug, Default)]
+struct Pruned {
+    removed: usize,
+    kept: usize,
+    missing: usize,
+}
+
+/// Forget every manifest entry whose destination `plan` no longer
+/// produces. A destination still holding what krypt last wrote is deleted,
+/// as `unlink` would; one edited since is left on disk. With `dry_run`,
+/// only counts.
+fn prune(
+    plan: &crate::copy::Plan,
+    manifest: &mut Manifest,
+    dry_run: bool,
+) -> Result<Pruned, DeployError> {
+    let planned: HashSet<&Path> = plan.actions.iter().map(Action::dst).collect();
+    let stale: Vec<_> = manifest
+        .entries
+        .values()
+        .filter(|e| !planned.contains(e.dst.as_path()))
+        .map(entry_drift)
+        .collect();
+
+    let mut pruned = Pruned::default();
+    for d in stale {
+        match d.status {
+            DriftStatus::Clean => {
+                if !dry_run {
+                    fs::remove_file(&d.dst)?;
+                }
+                pruned.removed += 1;
+            }
+            DriftStatus::Drifted => pruned.kept += 1,
+            DriftStatus::DstMissing => pruned.missing += 1,
+        }
+        if !dry_run {
+            manifest.forget(&d.dst);
+        }
+    }
+    Ok(pruned)
 }
 
 fn hash_matches_recorded(dst: &Path, recorded: &str) -> bool {
@@ -539,6 +604,128 @@ dst = "${{HOME}}/a"
         let m = Manifest::load(&manifest_path).unwrap().unwrap();
         let entry = &m.entries[&home.path().join("a")];
         assert_eq!(entry.hash_dst, hash_file(&home.path().join("a")).unwrap());
+    }
+
+    #[test]
+    fn link_prunes_entries_the_config_dropped() {
+        let repo = tempdir().unwrap();
+        let home = tempdir().unwrap();
+        let state = tempdir().unwrap();
+
+        let entry =
+            |name: &str| format!("[[link]]\nsrc = \"{name}\"\ndst = \"${{HOME}}/{name}\"\n");
+        let header = format!("[paths]\nHOME = \"{}\"\n\n", toml_path(home.path()));
+        let cfg_path = synth_repo(
+            repo.path(),
+            &[
+                ("keep", b"k"),
+                ("clean", b"c"),
+                ("edited", b"e"),
+                ("gone", b"g"),
+            ],
+        );
+        let all = ["keep", "clean", "edited", "gone"].map(entry).concat();
+        fs::write(&cfg_path, format!("{header}{all}")).unwrap();
+        let manifest_path = state.path().join("manifest.json");
+        // Host platform: pruning is skipped under a `--platform` override.
+        let dopts = DeployOpts {
+            platform: None,
+            ..opts(cfg_path.clone(), manifest_path.clone(), false)
+        };
+        link(&dopts).unwrap();
+
+        fs::write(home.path().join("edited"), b"USER EDITED").unwrap();
+        fs::remove_file(home.path().join("gone")).unwrap();
+        fs::write(&cfg_path, format!("{header}{}", entry("keep"))).unwrap();
+
+        let r = link(&DeployOpts {
+            dry_run: true,
+            ..dopts.clone()
+        })
+        .unwrap();
+        assert_eq!(
+            (r.pruned_removed, r.pruned_kept, r.pruned_missing),
+            (1, 1, 1)
+        );
+        assert!(
+            home.path().join("clean").exists(),
+            "dry run deletes nothing"
+        );
+
+        let r = link(&dopts).unwrap();
+        assert_eq!(
+            (r.pruned_removed, r.pruned_kept, r.pruned_missing),
+            (1, 1, 1)
+        );
+        assert!(
+            !home.path().join("clean").exists(),
+            "unchanged copy deleted"
+        );
+        assert_eq!(
+            fs::read(home.path().join("edited")).unwrap(),
+            b"USER EDITED"
+        );
+        assert!(home.path().join("keep").exists());
+
+        let m = Manifest::load(&manifest_path).unwrap().unwrap();
+        let tracked: Vec<_> = m.entries.keys().cloned().collect();
+        assert_eq!(tracked, vec![home.path().join("keep")]);
+
+        // Nothing left to prune on the next run.
+        let r = link(&dopts).unwrap();
+        assert_eq!(
+            (r.pruned_removed, r.pruned_kept, r.pruned_missing),
+            (0, 0, 0)
+        );
+    }
+
+    #[test]
+    fn link_does_not_prune_for_another_platform() {
+        let repo = tempdir().unwrap();
+        let home = tempdir().unwrap();
+        let state = tempdir().unwrap();
+
+        let (host, other) = match Platform::current() {
+            Platform::Linux => ("linux", Platform::Macos),
+            Platform::Macos => ("macos", Platform::Linux),
+            Platform::Windows => ("windows", Platform::Linux),
+        };
+        let cfg_text = format!(
+            r#"
+[paths]
+HOME = "{home}"
+
+[[link]]
+src = "a"
+dst = "${{HOME}}/a"
+platform = "{host}"
+"#,
+            home = toml_path(home.path())
+        );
+        let cfg_path = synth_repo(repo.path(), &[("a", b"a1")]);
+        fs::write(&cfg_path, cfg_text).unwrap();
+        let manifest_path = state.path().join("manifest.json");
+        let host_opts = DeployOpts {
+            platform: None,
+            ..opts(cfg_path, manifest_path.clone(), false)
+        };
+        link(&host_opts).unwrap();
+
+        // The other platform's plan leaves the host-only entry out, which
+        // must not read as "the config dropped it".
+        let r = link(&DeployOpts {
+            platform: Some(other),
+            ..host_opts
+        })
+        .unwrap();
+        assert_eq!(r.written, 0);
+        assert_eq!(
+            (r.pruned_removed, r.pruned_kept, r.pruned_missing),
+            (0, 0, 0)
+        );
+        assert!(home.path().join("a").exists());
+        let m = Manifest::load(&manifest_path).unwrap().unwrap();
+        assert_eq!(m.entries.len(), 1);
     }
 
     #[test]

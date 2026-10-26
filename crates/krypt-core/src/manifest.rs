@@ -271,27 +271,29 @@ pub struct DriftRecord {
 /// classifying drift. Read errors (e.g. permission denied) are treated
 /// as `Drifted` with `current_hash = None` — better to surface than swallow.
 pub fn detect_drift(manifest: &Manifest) -> Vec<DriftRecord> {
-    let mut out = Vec::with_capacity(manifest.entries.len());
-    for entry in manifest.entries.values() {
-        let (current_hash, status) = if !entry.dst.exists() {
-            (None, DriftStatus::DstMissing)
-        } else {
-            match hash_file(&entry.dst) {
-                Ok(h) if h == entry.hash_dst => (Some(h), DriftStatus::Clean),
-                Ok(h) => (Some(h), DriftStatus::Drifted),
-                Err(_) => (None, DriftStatus::Drifted),
-            }
-        };
-        out.push(DriftRecord {
-            src: entry.src.clone(),
-            dst: entry.dst.clone(),
-            kind: entry.kind,
-            recorded_hash: entry.hash_dst.clone(),
-            current_hash,
-            status,
-        });
+    manifest.entries.values().map(entry_drift).collect()
+}
+
+/// Hash one entry's destination and classify its drift, the way
+/// [`detect_drift`] does for every entry.
+pub fn entry_drift(entry: &ManifestEntry) -> DriftRecord {
+    let (current_hash, status) = if !entry.dst.exists() {
+        (None, DriftStatus::DstMissing)
+    } else {
+        match hash_file(&entry.dst) {
+            Ok(h) if h == entry.hash_dst => (Some(h), DriftStatus::Clean),
+            Ok(h) => (Some(h), DriftStatus::Drifted),
+            Err(_) => (None, DriftStatus::Drifted),
+        }
+    };
+    DriftRecord {
+        src: entry.src.clone(),
+        dst: entry.dst.clone(),
+        kind: entry.kind,
+        recorded_hash: entry.hash_dst.clone(),
+        current_hash,
+        status,
     }
-    out
 }
 
 // ─── Internals ──────────────────────────────────────────────────────────────
