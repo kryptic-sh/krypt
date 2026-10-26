@@ -8,6 +8,8 @@ patch bumps.
 
 ## [Unreleased]
 
+## [0.4.4] - 2026-10-26
+
 ### Fixed
 
 - **`krypt link` and `krypt update` forget files the config no longer
