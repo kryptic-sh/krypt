@@ -8,16 +8,22 @@ patch bumps.
 
 ## [Unreleased]
 
+### Fixed
+
+- The HTTPS transport `krypt init` / `krypt update` use now builds against
+  `tokio` 1.54.1, which fixes RUSTSEC-2026-0386: `AsyncFd::new` and related
+  constructors violated I/O safety.
+
 ## [0.4.4] - 2026-10-26
 
 ### Fixed
 
-- **`krypt link` and `krypt update` forget files the config no longer
-  deploys.** Removing a `[[link]]` or `[[template]]`, or deleting a file a
-  `src_glob` matched, left its entry in the manifest forever, so `krypt diff` kept listing it and
-  its deployed copy stayed behind. Such entries are now pruned: a copy still as
-  krypt wrote it is deleted, one you edited is left in place, and the report
-  counts both (`pruned: N (removed …, kept … edited, … already gone)`).
+- **`krypt link` and `krypt update` forget files the config no longer deploys.**
+  Removing a `[[link]]` or `[[template]]`, or deleting a file a `src_glob`
+  matched, left its entry in the manifest forever, so `krypt diff` kept listing
+  it and its deployed copy stayed behind. Such entries are now pruned: a copy
+  still as krypt wrote it is deleted, one you edited is left in place, and the
+  report counts both (`pruned: N (removed …, kept … edited, … already gone)`).
   `--dry-run` only counts, and a `--platform` override prunes nothing.
 
 ## [0.4.3] - 2026-10-22
@@ -26,8 +32,8 @@ patch bumps.
 
 - The HTTPS transport `krypt init` / `krypt update` use now builds against
   `rustls-webpki` 0.103.16 and `webpki-root-certs` 1.0.10, which fix
-  RUSTSEC-2026-0382 and RUSTSEC-2026-0383: certificate verification could
-  accept intermediates from the distrusted emSign roots.
+  RUSTSEC-2026-0382 and RUSTSEC-2026-0383: certificate verification could accept
+  intermediates from the distrusted emSign roots.
 - **`krypt link` and `krypt update` no longer skip a destination that already
   matches its source.** A file holding exactly the bytes krypt would write, but
   not the hash it last recorded (or never recorded at all), counted as a
