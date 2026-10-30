@@ -8,6 +8,8 @@ patch bumps.
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-10-30
+
 ### Changed
 
 - **Edited `[[template]]` destinations are no longer conflicts or drift.** A
