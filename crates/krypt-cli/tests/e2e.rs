@@ -537,6 +537,39 @@ fn test_adopt_without_paths_skips_templates() {
     assert_eq!(fs::read(rp.join("local.template")).unwrap(), b"name = me\n");
 }
 
+/// A `[[template]]` destination edited on the machine is neither a `link`
+/// conflict nor `diff` drift, so both exit 0; a drifted `[[link]]` still is.
+#[test]
+fn test_edited_template_is_not_a_conflict() {
+    let env = Env::new();
+    let (_rp, work) = linked_elsewhere(&env);
+    fs::write(env.path(".local.conf"), b"name = me\n").expect("fill template");
+
+    let out = cmd(&env)
+        .current_dir(&work)
+        .arg("link")
+        .output()
+        .expect("run link");
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(out.status.success(), "{stdout}");
+    assert!(stdout.contains("templates kept: 1"), "{stdout}");
+    assert!(!stdout.contains("conflicts"), "{stdout}");
+    assert_eq!(fs::read(env.path(".local.conf")).unwrap(), b"name = me\n");
+
+    let diff = |env: &Env| cmd(env).current_dir(&work).arg("diff").output();
+    let out = diff(&env).expect("run diff");
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(out.status.success(), "{stdout}");
+    assert!(stdout.contains("edited "), "{stdout}");
+    assert!(stdout.contains("all clean"), "{stdout}");
+
+    fs::write(env.path(".config/starship.toml"), b"edited\n").expect("edit link");
+    let out = diff(&env).expect("run diff");
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(!out.status.success(), "{stdout}");
+    assert!(stdout.contains("1/2 entries dirty"), "{stdout}");
+}
+
 /// `krypt adopt <path>` imports a file krypt does not deploy yet into the
 /// recorded repo, and adopts the edits of one it does, in one call.
 #[test]

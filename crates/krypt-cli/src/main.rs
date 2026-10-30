@@ -274,7 +274,8 @@ struct UpdateArgs {
     #[arg(long)]
     skip_hooks: bool,
 
-    /// On link: overwrite real conflicts.
+    /// On link: overwrite real conflicts. Edited `[[template]]` destinations are
+    /// always kept.
     #[arg(long)]
     force: bool,
 
@@ -435,8 +436,9 @@ struct DeployArgs {
     #[arg(long)]
     dry_run: bool,
 
-    /// On `link`: overwrite real conflicts. On `relink`: overwrite + force-remove
-    /// drifted destinations during the unlink half.
+    /// On `link`: overwrite real conflicts; edited `[[template]]` destinations are
+    /// always kept. On `relink`: overwrite + force-remove drifted destinations
+    /// during the unlink half.
     #[arg(long)]
     force: bool,
 }
@@ -692,6 +694,7 @@ fn cmd_diff(manifest_path: Option<PathBuf>) -> Result<ExitCode> {
 
     let drift = detect_drift(&manifest);
     let mut dirty = 0usize;
+    let mut edited = 0usize;
     let width = drift
         .iter()
         .map(|d| d.dst.to_string_lossy().len())
@@ -702,6 +705,11 @@ fn cmd_diff(manifest_path: Option<PathBuf>) -> Result<ExitCode> {
         let dst = d.dst.to_string_lossy();
         match d.status {
             DriftStatus::Clean => println!("clean    {dst:width$}"),
+            // A template's per-machine values, not drift: kept by `link`.
+            DriftStatus::Drifted if d.is_local_edit() => {
+                println!("edited   {dst:width$}");
+                edited += 1;
+            }
             DriftStatus::Drifted => {
                 println!("drifted  {dst:width$}");
                 dirty += 1;
@@ -714,7 +722,14 @@ fn cmd_diff(manifest_path: Option<PathBuf>) -> Result<ExitCode> {
     }
 
     if dirty == 0 {
-        println!("\n{} entries, all clean", drift.len());
+        if edited == 0 {
+            println!("\n{} entries, all clean", drift.len());
+        } else {
+            println!(
+                "\n{} entries, all clean ({edited} templates edited on this machine)",
+                drift.len()
+            );
+        }
         Ok(ExitCode::SUCCESS)
     } else {
         println!("\n{}/{} entries dirty", dirty, drift.len());
@@ -955,6 +970,12 @@ fn print_link_report(r: &LinkReport, dry_run: bool) {
     println!("  {verb}: {}", r.written);
     if r.idempotent_rewrites > 0 {
         println!("  idempotent re-deploys: {}", r.idempotent_rewrites);
+    }
+    if r.templates_kept > 0 {
+        println!(
+            "  templates kept: {} (edited on this machine)",
+            r.templates_kept
+        );
     }
     let pruned = r.pruned_removed + r.pruned_kept + r.pruned_missing;
     if pruned > 0 {

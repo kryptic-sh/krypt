@@ -8,6 +8,20 @@ patch bumps.
 
 ## [Unreleased]
 
+### Changed
+
+- **Edited `[[template]]` destinations are no longer conflicts or drift.** A
+  template seeds a per-machine file (a git identity, a monitor layout) that is
+  meant to be edited in place, yet `krypt link` / `krypt update` counted every
+  such file as a skipped conflict and exited 1, and `krypt diff` /
+  `krypt doctor` reported it as drifted. `link` now reports them as
+  `templates kept: N (edited on this machine)` and exits 0; `diff` lists them as
+  `edited` without counting them dirty, and `doctor` as `N templates edited`.
+  `--force` no longer overwrites them either — delete the destination to seed it
+  again. An unedited template still follows changes to its source. `LinkReport`
+  gains `templates_kept`, and `DriftRecord::is_local_edit` tells the two kinds
+  of drift apart.
+
 ### Fixed
 
 - The HTTPS transport `krypt init` / `krypt update` use now builds against

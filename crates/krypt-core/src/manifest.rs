@@ -267,6 +267,17 @@ pub struct DriftRecord {
     pub status: DriftStatus,
 }
 
+impl DriftRecord {
+    /// Whether this is a `[[template]]` destination edited since krypt seeded
+    /// it. A template exists to hold per-machine values, so such an edit is
+    /// expected, not drift to fix. An unreadable destination is not one.
+    pub fn is_local_edit(&self) -> bool {
+        self.kind == EntryKind::Template
+            && self.status == DriftStatus::Drifted
+            && self.current_hash.is_some()
+    }
+}
+
 /// Walk every entry in the manifest, hashing the current destination and
 /// classifying drift. Read errors (e.g. permission denied) are treated
 /// as `Drifted` with `current_hash = None` — better to surface than swallow.

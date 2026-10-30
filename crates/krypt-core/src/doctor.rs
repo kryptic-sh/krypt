@@ -448,22 +448,30 @@ fn check_link_destinations(manifest_path: &Path) -> CheckStatus<String> {
         Ok(Some(manifest)) => {
             let drift = detect_drift(&manifest);
             let total = drift.len();
+            let edited = drift.iter().filter(|d| d.is_local_edit()).count();
             let drifted = drift
                 .iter()
-                .filter(|d| d.status == DriftStatus::Drifted)
+                .filter(|d| d.status == DriftStatus::Drifted && !d.is_local_edit())
                 .count();
             let missing = drift
                 .iter()
                 .filter(|d| d.status == DriftStatus::DstMissing)
                 .count();
-            let clean = total - drifted - missing;
+            let clean = total - edited - drifted - missing;
 
             if drifted == 0 && missing == 0 {
-                CheckStatus::Ok(format!("{clean} clean"))
+                if edited == 0 {
+                    CheckStatus::Ok(format!("{clean} clean"))
+                } else {
+                    CheckStatus::Ok(format!("{clean} clean, {edited} templates edited"))
+                }
             } else {
                 let mut parts = Vec::new();
                 if clean > 0 {
                     parts.push(format!("{clean} clean"));
+                }
+                if edited > 0 {
+                    parts.push(format!("{edited} templates edited"));
                 }
                 if drifted > 0 {
                     parts.push(format!("{drifted} drifted"));
@@ -806,6 +814,42 @@ mod tests {
         assert!(report.link_destinations.needs_attention());
         if let CheckStatus::Warn(msg) = &report.link_destinations {
             assert!(msg.contains("drifted"), "msg: {msg}");
+        }
+    }
+
+    #[test]
+    fn edited_template_is_not_drift() {
+        let repo_dir = tempdir().unwrap();
+        let tc_dir = tempdir().unwrap();
+        let state_dir = tempdir().unwrap();
+
+        init_git_repo(repo_dir.path());
+        let tc_path = tc_dir.path().join("config.toml");
+        make_tool_config(repo_dir.path(), &tc_path);
+        make_krypt_toml(repo_dir.path(), "");
+
+        let dst = state_dir.path().join("local.conf");
+        fs::write(&dst, b"name = me").unwrap();
+
+        let manifest_path = state_dir.path().join("manifest.json");
+        let mut m = Manifest::new(repo_dir.path().to_path_buf());
+        m.record(ManifestEntry {
+            kind: EntryKind::Template,
+            ..fake_manifest_entry("local.template", dst)
+        });
+        m.save(&manifest_path).unwrap();
+
+        let report = doctor(&DoctorOpts {
+            tool_config_path: tc_path,
+            config_path: None,
+            manifest_path,
+            repo_path: None,
+            detected_manager: None,
+        });
+
+        match &report.link_destinations {
+            CheckStatus::Ok(msg) => assert!(msg.contains("1 templates edited"), "msg: {msg}"),
+            other => panic!("expected Ok, got {other:?}"),
         }
     }
 

@@ -110,19 +110,19 @@ Notes on that sequence:
 
 Useful subcommands:
 
-| Command                            | Effect                                                            |
-| ---------------------------------- | ----------------------------------------------------------------- |
-| `krypt validate`                   | parse `.krypt.toml`, report schema errors                         |
-| `krypt paths`                      | print every resolved `${VAR}` for this host                       |
-| `krypt diff`                       | compare deployed files to the manifest: clean / drifted / missing |
-| `krypt adopt`                      | copy edits made to deployed files back into the repo              |
-| `krypt adopt <path>...`            | adopt those files: edits if deployed, else import as new          |
-| `krypt unlink` / `relink`          | delete manifest-tracked destinations / unlink then link again     |
-| `krypt notify <title> <body>`      | platform-correct desktop notification                             |
-| `krypt menu`                       | list `[[command]] group = "menu"` entries                         |
-| `krypt menu <name>`                | run a menu's steps                                                |
-| `krypt <group> <name>`             | generic dispatcher for any group                                  |
-| `krypt battery {report,log,clear}` | built-in battery state utility                                    |
+| Command                            | Effect                                                                              |
+| ---------------------------------- | ----------------------------------------------------------------------------------- |
+| `krypt validate`                   | parse `.krypt.toml`, report schema errors                                           |
+| `krypt paths`                      | print every resolved `${VAR}` for this host                                         |
+| `krypt diff`                       | compare deployed files to the manifest: clean / drifted / missing / edited template |
+| `krypt adopt`                      | copy edits made to deployed files back into the repo                                |
+| `krypt adopt <path>...`            | adopt those files: edits if deployed, else import as new                            |
+| `krypt unlink` / `relink`          | delete manifest-tracked destinations / unlink then link again                       |
+| `krypt notify <title> <body>`      | platform-correct desktop notification                                               |
+| `krypt menu`                       | list `[[command]] group = "menu"` entries                                           |
+| `krypt menu <name>`                | run a menu's steps                                                                  |
+| `krypt <group> <name>`             | generic dispatcher for any group                                                    |
+| `krypt battery {report,log,clear}` | built-in battery state utility                                                      |
 
 `krypt adopt` with no paths walks the manifest and copies every deployed file
 you edited in place back to its repo source, except `[[template]]` destinations:

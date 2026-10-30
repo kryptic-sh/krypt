@@ -130,10 +130,15 @@ ones unless you pass `--force`.
 A destination that already exists and does **not** match the manifest is
 reported as a conflict and skipped — `krypt link` will not clobber a file it
 didn't write unless you pass `--force`. That is what makes hand-edited files
-survive a re-link, and it's why `[[template]]` entries behave like "seeded
-once": they deploy the same way as `[[link]]`, and the only extra thing
-`[[template]]` gives you is a `prompts` list wiring the destination to
-`krypt setup`:
+survive a re-link.
+
+`[[template]]` entries are "seeded once": krypt writes the destination when it
+is missing, and keeps following the template while the destination is unedited.
+Once you edit it (or `krypt setup` fills it in), it holds per-machine values, so
+`krypt link` reports it as `templates kept` rather than a conflict and leaves it
+alone even with `--force`, and `krypt diff` lists it as `edited` without
+counting it as dirty. Delete the destination to seed it again. A template can
+also carry a `prompts` list wiring the destination to `krypt setup`:
 
 ```toml
 [[template]]
@@ -394,8 +399,8 @@ steps = [
 krypt has no machine-specific config layer. Per-machine variation lives in:
 
 - Templates seeded once and edited by hand (e.g. `monitors.conf` per laptop) —
-  once you edit the deployed copy it stops matching the manifest, so subsequent
-  `krypt link` runs report it as a conflict and leave it alone
+  once you edit the deployed copy, subsequent `krypt link` runs keep it, and
+  neither `link` nor `diff` reports it as a problem
 - Predicates that detect the machine state (`command_exists:`, `env:`,
   `file_exists:`, `platform:`)
 

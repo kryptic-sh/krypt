@@ -13,8 +13,11 @@
 //!    check the manifest — if the recorded `hash_dst` matches the
 //!    current file on disk, the destination is "ours" and a re-deploy
 //!    is safe; promote to a [`Action::Copy`]. Same if the file on disk
-//!    already equals the source, whatever the manifest says. If `force`
-//!    is set, promote everything.
+//!    already equals the source, whatever the manifest says. A
+//!    `[[template]]` destination edited since it was seeded is kept and
+//!    dropped from the plan, even with `force`: its edits are the
+//!    per-machine values it exists to hold. If `force` is set, promote
+//!    every other conflict.
 //! 7. Execute the plan.
 //! 8. **Prune**: forget every manifest entry the plan no longer
 //!    produces (its entry was removed, or a `src_glob` stopped matching it). A
@@ -36,7 +39,9 @@ use std::path::{Path, PathBuf};
 use thiserror::Error;
 
 use crate::config::{Config, ConfigError};
-use crate::copy::{Action, ExecError, ExecOpts, PlanError, Report, execute as execute_plan, plan};
+use crate::copy::{
+    Action, EntryKind, ExecError, ExecOpts, PlanError, Report, execute as execute_plan, plan,
+};
 use crate::manifest::{
     DriftStatus, Manifest, ManifestEntry, ManifestError, detect_drift, entry_drift, hash_file,
 };
@@ -85,7 +90,8 @@ pub struct DeployOpts {
     /// describes what *would* have happened.
     pub dry_run: bool,
     /// On `link`, overwrite real conflicts (destinations with content
-    /// that doesn't match any prior manifest entry). On `unlink`,
+    /// that doesn't match any prior manifest entry), except edited
+    /// `[[template]]` destinations, which are always kept. On `unlink`,
     /// delete destinations even if they've drifted from the recorded
     /// hash.
     pub force: bool,
@@ -104,6 +110,10 @@ pub struct LinkReport {
     /// matched the manifest's recorded one, or it already held the
     /// source's bytes.
     pub idempotent_rewrites: usize,
+    /// `[[template]]` destinations left alone because they were edited on
+    /// this machine since krypt seeded them. Not conflicts: `force` keeps
+    /// them too.
+    pub templates_kept: usize,
     /// Conflicts skipped because the user-supplied `--platform` filter
     /// excluded them. Always 0 today (the planner already filters); kept
     /// for forward compat with cross-platform planning.
@@ -143,7 +153,7 @@ pub fn link(opts: &DeployOpts) -> Result<LinkReport, DeployError> {
         Manifest::load(&opts.manifest_path)?.unwrap_or_else(|| Manifest::new(repo_root.clone()));
     manifest.repo_path = repo_root.clone();
 
-    let (narrowed, idempotent) = narrow_conflicts(&raw_plan, &manifest, opts.force);
+    let (narrowed, idempotent, templates_kept) = narrow_conflicts(&raw_plan, &manifest, opts.force);
 
     let report = execute_plan(
         &narrowed,
@@ -193,6 +203,7 @@ pub fn link(opts: &DeployOpts) -> Result<LinkReport, DeployError> {
         written: report.written.len(),
         conflicts_skipped,
         idempotent_rewrites: idempotent,
+        templates_kept,
         platform_skipped: 0,
         pruned_removed: pruned.removed,
         pruned_kept: pruned.kept,
@@ -260,19 +271,35 @@ pub fn relink(opts: &DeployOpts) -> Result<(UnlinkReport, LinkReport), DeployErr
 // ─── Internals ──────────────────────────────────────────────────────────────
 
 /// Walk `plan.actions` and, for each [`Action::Conflict`], either promote
-/// to [`Action::Copy`] (safe to overwrite) or leave it alone (real
-/// conflict). Returns `(narrowed_plan, idempotent_count)`.
+/// to [`Action::Copy`] (safe to overwrite), drop it (an edited
+/// `[[template]]` destination) or leave it alone (real conflict). Returns
+/// `(narrowed_plan, idempotent_count, templates_kept)`.
 fn narrow_conflicts(
     plan: &crate::copy::Plan,
     manifest: &Manifest,
     force: bool,
-) -> (crate::copy::Plan, usize) {
+) -> (crate::copy::Plan, usize, usize) {
     let mut out = Vec::with_capacity(plan.actions.len());
     let mut idempotent = 0usize;
+    let mut templates_kept = 0usize;
     for action in &plan.actions {
         match action {
             Action::Copy { .. } => out.push(action.clone()),
             Action::Conflict { src, dst, kind } => {
+                let ours = manifest
+                    .entries
+                    .get(dst)
+                    .is_some_and(|entry| hash_matches_recorded(dst, &entry.hash_dst));
+                // A destination that already holds the source's bytes loses
+                // nothing by being written, and writing it records it, so a
+                // later source change deploys instead of conflicting forever.
+                let safe = ours || same_content(src, dst);
+                // A template seeds a per-machine file once; edits made to it
+                // since are what it is for, so they survive even `force`.
+                if *kind == EntryKind::Template && !safe {
+                    templates_kept += 1;
+                    continue;
+                }
                 if force {
                     out.push(Action::Copy {
                         src: src.clone(),
@@ -281,14 +308,7 @@ fn narrow_conflicts(
                     });
                     continue;
                 }
-                let ours = manifest
-                    .entries
-                    .get(dst)
-                    .is_some_and(|entry| hash_matches_recorded(dst, &entry.hash_dst));
-                // A destination that already holds the source's bytes loses
-                // nothing by being written, and writing it records it, so a
-                // later source change deploys instead of conflicting forever.
-                if ours || same_content(src, dst) {
+                if safe {
                     out.push(Action::Copy {
                         src: src.clone(),
                         dst: dst.clone(),
@@ -301,7 +321,11 @@ fn narrow_conflicts(
             }
         }
     }
-    (crate::copy::Plan { actions: out }, idempotent)
+    (
+        crate::copy::Plan { actions: out },
+        idempotent,
+        templates_kept,
+    )
 }
 
 /// What [`prune`] did with each entry it forgot.
@@ -604,6 +628,56 @@ dst = "${{HOME}}/a"
         let m = Manifest::load(&manifest_path).unwrap().unwrap();
         let entry = &m.entries[&home.path().join("a")];
         assert_eq!(entry.hash_dst, hash_file(&home.path().join("a")).unwrap());
+    }
+
+    #[test]
+    fn link_keeps_edited_template_even_with_force() {
+        let repo = tempdir().unwrap();
+        let home = tempdir().unwrap();
+        let state = tempdir().unwrap();
+
+        let cfg_text = format!(
+            r#"
+[paths]
+HOME = "{home}"
+
+[[template]]
+src = "local.template"
+dst = "${{HOME}}/local.conf"
+prompts = []
+"#,
+            home = toml_path(home.path())
+        );
+        let cfg_path = synth_repo(repo.path(), &[("local.template", b"name = {{name}}\n")]);
+        fs::write(&cfg_path, cfg_text).unwrap();
+        let manifest_path = state.path().join("manifest.json");
+        let dst = home.path().join("local.conf");
+
+        // Seeded once, and while unedited it follows the template.
+        link(&opts(cfg_path.clone(), manifest_path.clone(), false)).unwrap();
+        fs::write(
+            repo.path().join("local.template"),
+            b"name = {{name}}\nv = 2\n",
+        )
+        .unwrap();
+        let r = link(&opts(cfg_path.clone(), manifest_path.clone(), false)).unwrap();
+        assert_eq!(r.templates_kept, 0);
+        assert_eq!(fs::read(&dst).unwrap(), b"name = {{name}}\nv = 2\n");
+
+        // Edited on the machine, it is kept: not a conflict, not overwritten.
+        fs::write(&dst, b"name = me\n").unwrap();
+        for force in [false, true] {
+            let r = link(&opts(cfg_path.clone(), manifest_path.clone(), force)).unwrap();
+            assert_eq!(r.templates_kept, 1, "force = {force}");
+            assert_eq!(r.conflicts_skipped, 0, "force = {force}");
+            assert_eq!(r.written, 0, "force = {force}");
+            assert_eq!(fs::read(&dst).unwrap(), b"name = me\n", "force = {force}");
+        }
+        let m = Manifest::load(&manifest_path).unwrap().unwrap();
+        assert!(
+            m.entries.contains_key(&dst),
+            "a kept template is not pruned"
+        );
     }
 
     #[test]
