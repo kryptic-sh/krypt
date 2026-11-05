@@ -1,7 +1,8 @@
 //! `pacman` / `paru` package manager implementation (Arch Linux).
 //!
 //! Prefers `paru` if available (adds AUR support), falls back to `pacman`.
-//! Both use the same install syntax. The manager name is always `"pacman"` to
+//! Both use the same install syntax, but not the same user: `pacman` runs as
+//! root, `paru` as the invoking user. The manager name is always `"pacman"` to
 //! match the `DepsGroup.pacman` config field.
 
 use crate::manager::{PackageError, PackageManager, RunOutcome, Runner};
@@ -45,13 +46,28 @@ fn percent_encode(value: &str) -> String {
 pub struct Pacman;
 
 impl Pacman {
-    /// Binary to use for installation: `paru` if available, else `pacman`.
-    fn binary(&self) -> &'static str {
-        if which::which("paru").is_ok() {
-            "paru"
+    /// Install `packages` with `paru` when `paru_on_path`, else `pacman`.
+    ///
+    /// `paru` runs as the invoking user, never through `sudo`: it refuses to
+    /// build AUR packages as root (makepkg does too) and raises its own
+    /// privileges with `sudo` for the pacman step. `pacman` runs as root.
+    fn install_with(
+        &self,
+        runner: &dyn Runner,
+        packages: &[String],
+        paru_on_path: bool,
+    ) -> Result<(), PackageError> {
+        let mut args = vec!["-S", "--noconfirm"];
+        args.extend(packages.iter().map(String::as_str));
+        let RunOutcome { status, stderr, .. } = if paru_on_path {
+            runner.run("paru", &args)?
         } else {
-            "pacman"
+            runner.run_as_root("pacman", &args)?
+        };
+        if status != 0 {
+            return Err(PackageError::ExitFailure { status, stderr });
         }
+        Ok(())
     }
 }
 
@@ -84,20 +100,55 @@ impl PackageManager for Pacman {
     }
 
     fn install(&self, runner: &dyn Runner, packages: &[String]) -> Result<(), PackageError> {
-        let bin = self.binary();
-        let mut args = vec!["-S", "--noconfirm"];
-        args.extend(packages.iter().map(String::as_str));
-        let RunOutcome { status, stderr, .. } = runner.run_as_root(bin, &args)?;
-        if status != 0 {
-            return Err(PackageError::ExitFailure { status, stderr });
-        }
-        Ok(())
+        self.install_with(runner, packages, which::which("paru").is_ok())
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::manager::MockRunner;
+
+    fn calls_for_install(paru_on_path: bool) -> Vec<(String, Vec<String>)> {
+        let runner = MockRunner::new();
+        Pacman
+            .install_with(&runner, &["foo".into(), "bar".into()], paru_on_path)
+            .unwrap();
+        runner.calls()
+    }
+
+    #[test]
+    fn paru_installs_as_the_invoking_user() {
+        assert_eq!(
+            calls_for_install(true),
+            [(
+                "paru".to_string(),
+                vec![
+                    "-S".into(),
+                    "--noconfirm".into(),
+                    "foo".into(),
+                    "bar".into()
+                ]
+            )]
+        );
+    }
+
+    #[test]
+    fn pacman_installs_through_sudo() {
+        assert_eq!(
+            calls_for_install(false),
+            [(
+                "sudo".to_string(),
+                vec![
+                    "pacman".into(),
+                    "-S".into(),
+                    "--noconfirm".into(),
+                    "foo".into(),
+                    "bar".into()
+                ]
+            )]
+        );
+    }
 
     #[test]
     fn percent_encode_keeps_unreserved_and_escapes_the_rest() {

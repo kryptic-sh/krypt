@@ -16,18 +16,24 @@ use krypt_pkg::winget::Winget;
 // ─── pacman ───────────────────────────────────────────────────────────────────
 
 #[test]
-fn pacman_install_batches_with_sudo() {
+fn pacman_install_batches() {
     let runner = MockRunner::new();
     Pacman
         .install(&runner, &["foo".to_string(), "bar".to_string()])
         .unwrap();
     let calls = runner.calls();
     assert_eq!(calls.len(), 1);
+    // paru when the host has it, as the invoking user; else pacman through sudo.
     let (cmd, args) = &calls[0];
-    assert_eq!(cmd, "sudo");
-    // args[0] is either "pacman" or "paru"; args[1..] is fixed
-    assert!(args[0] == "pacman" || args[0] == "paru");
-    assert_eq!(&args[1..], &["-S", "--noconfirm", "foo", "bar"]);
+    let install_args = match cmd.as_str() {
+        "paru" => &args[..],
+        "sudo" => {
+            assert_eq!(args[0], "pacman");
+            &args[1..]
+        }
+        other => panic!("unexpected installer {other}"),
+    };
+    assert_eq!(install_args, ["-S", "--noconfirm", "foo", "bar"]);
 }
 
 #[test]
