@@ -8,6 +8,8 @@ patch bumps.
 
 ## [Unreleased]
 
+## [0.6.1] - 2026-11-05
+
 ### Fixed
 
 - **`krypt deps` runs `paru` as the invoking user, not through `sudo`.** On
