@@ -1,0 +1,55 @@
+name: defender-rebuild
+
+# One-off experiment, never merged: build the Windows binary from this
+# commit twice on the same runner image, once restoring the release
+# job's rust-cache entry and once from the lockfile alone, so a Defender
+# scan of each says whether the cached artifacts carry the detection.
+on:
+  push:
+    branches: [test/defender-rebuild]
+
+# Matches ci.yml's top-level env: rust-cache hashes CARGO*/RUST* vars into
+# its key, and the control job has to land on the release job's entry.
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+
+permissions:
+  contents: read
+
+jobs:
+  # The job id is part of rust-cache's key: it must stay `build`.
+  build:
+    name: cached
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v7
+      - run: rustup show
+      - run: rustup target add x86_64-pc-windows-msvc
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: release-x86_64-pc-windows-msvc
+          save-if: false
+      - run: cargo build --release --locked --target x86_64-pc-windows-msvc --package krypt-cli
+      - uses: actions/upload-artifact@v7
+        with:
+          name: krypt-cached
+          path: target/x86_64-pc-windows-msvc/release/krypt.exe
+          retention-days: 7
+          if-no-files-found: error
+
+  nocache:
+    name: no cache
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v7
+      - run: rustup show
+      - run: rustup target add x86_64-pc-windows-msvc
+      - run: cargo build --release --locked --target x86_64-pc-windows-msvc --package krypt-cli
+      - uses: actions/upload-artifact@v7
+        with:
+          name: krypt-nocache
+          path: target/x86_64-pc-windows-msvc/release/krypt.exe
+          retention-days: 7
+          if-no-files-found: error
