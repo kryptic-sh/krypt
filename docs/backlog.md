@@ -5,6 +5,48 @@ verified. Delete an entry when it ships; `git log` keeps the history.
 
 ## Decisions needed
 
+### Windows release flagged by Defender; CI dependency cache suspect
+
+Microsoft Defender quarantines the `x86_64-pc-windows-msvc` `krypt.exe` of
+v0.6.0 and v0.6.1 as `Trojan:Win32/Bearfoos.B!ml` on write, before it runs
+(signatures 1.463.266.0, 2026-11-13). Not yet known whether this is a false
+positive or tampering. Established on 2026-11-13:
+
+- The installed zip is what CI built for the tag: its SHA-256 matches
+  `SHA256SUMS` on the release, the hash the release job logged, and
+  scoop-bucket's `bucket/krypt.json`. The assets were never replaced after
+  upload, and scoop-bucket's history for that manifest is `krypt-ci` release
+  commits only.
+- The source is clean: v0.4.4..v0.6.1 is the user's own commits (template edits
+  kept on `link`, `paru` run unprivileged), the only lockfile change is tokio,
+  and the `gix` fork pin (`094dce38`) is unchanged and signed.
+- A local build of the v0.6.1 tag with a fresh `CARGO_HOME` scans clean. So do
+  v0.4.4, v0.4.2 and the other kryptic-sh Windows releases on the same machine.
+  Its imports match the release's apart from two CRT functions; strings differ
+  only in embedded build paths.
+- The release job compiled only the workspace crates. Every dependency was
+  linked from the `Swatinem/rust-cache` entry
+  `v0-rust-release-x86_64-pc-windows-msvc-build-Windows_NT-x64-71c74219-bbdc48aa`,
+  saved on `refs/heads/main` by the run for `af89ef2` (2026-10-28). v0.4.4
+  predates that entry; every flagged release was built from it.
+
+The cache is the one input to the flagged binaries that was never built from
+verified source in the open, and the `build` job also holds `contents: write`.
+Options, in order of how much they settle:
+
+- **Delete both release cache entries and rebuild the Windows target with no
+  cache**, then scan the result. Clean means the cached artifacts carried the
+  trigger; flagged means it is the CI toolchain or a classifier quirk.
+- **Drop `rust-cache` from the `build` job permanently** so release binaries are
+  always compiled from the lockfile; costs a few minutes per tag.
+- **Submit the binary to Microsoft** as a false positive. Only once the rebuild
+  says it is one.
+
+Also open: the workflow pins third-party actions to moving tags
+(`Swatinem/rust-cache@v2`, `softprops/action-gh-release@v3`,
+`bnjbvr/cargo-machete@main`), and `build` has `contents: write` where `read`
+would do.
+
 ### `krypt <group> <name>` ignores `[meta] notify_backend`
 
 `dispatch::run_in_group` builds its notifier with
