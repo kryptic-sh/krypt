@@ -149,7 +149,13 @@ jobs:
       - uses: actions/checkout@v7
         with:
           submodules: recursive
+      # The action downloads a prebuilt binary, but falls back to
+      # `cargo install` when its unauthenticated GitHub API lookup fails.
+      # That build must not use the pinned rust-toolchain.toml: current
+      # cargo-machete needs a newer compiler than the pin.
       - uses: bnjbvr/cargo-machete@main
+        env:
+          RUSTUP_TOOLCHAIN: stable
 
   # Runs on every event, not only tags: the test jobs use latest stable, so
   # this is the only job that compiles the pinned rust-toolchain.toml and the
