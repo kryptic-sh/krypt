@@ -14,7 +14,6 @@ edition       = "2024"
 rust-version  = "1.95"
 license       = "MIT"
 repository    = "https://github.com/kryptic-sh/krypt"
-homepage      = "https://github.com/kryptic-sh/krypt"
 readme        = "README.md"
 
 [workspace.dependencies]
