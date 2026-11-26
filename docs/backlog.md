@@ -131,6 +131,12 @@ from crates.io; publish the fork's crates under new names; or yank the stale
 `krypt-cli` / `krypt-core` 0.2.x so `cargo install krypt-cli` fails instead of
 installing a broken build.
 
+Decided 2026-11-27: defer until upstream `gix` ships stash support itself, then
+repoint `gix` at crates.io and restore the two `publish_or_skip` lines. As of
+that date gitoxide `main` had no `gix-stash` crate or `gix::stash` module.
+Considered for now and set aside: dropping auto-stash, renamed fork crates,
+yanking 0.2.x.
+
 ### Battery reading on macOS and Windows
 
 `battery::default_reader` returns `UnsupportedReader` off Linux, so
