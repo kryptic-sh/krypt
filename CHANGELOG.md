@@ -8,6 +8,8 @@ patch bumps.
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-11-27
+
 ### Breaking
 
 - **`krypt update` no longer auto-stashes, and `--no-stash` is gone.** A dirty
