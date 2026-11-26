@@ -119,9 +119,17 @@ fork for the `stash` and `merge` features, which crates.io's `gix` lacks, so
 `cargo publish` rejects the manifest. The job still reports success. As of the
 v0.5.0 release (2026-10-30), crates.io had `krypt-pkg` / `krypt-platform` at
 0.5.0 and `krypt-core` / `krypt-cli` at 0.2.0, so `cargo install krypt-cli`
-installs an old binary. AUR, brew, scoop and GitHub Releases are unaffected.
-Unblocked by upstream GitoxideLabs/gitoxide#2603: repoint `gix` at crates.io and
-restore the two `publish_or_skip` lines.
+installs an old binary: 0.2.0 still hits the `krypt init` "Could not open data
+at …/krypt/repo" error fixed in 0.2.2, seen on a fresh machine on 2026-11-27.
+AUR, brew, scoop and GitHub Releases are unaffected.
+
+The upstream route is gone: GitoxideLabs/gitoxide#2603 was closed unmerged on
+2026-07-01, the maintainer having their own plans for `gix-stash`, so there is
+no date to wait for. Only `gix::stash` (auto-stash in `update.rs`) needs the
+fork. Options needing a decision: drop or replace auto-stash so `gix` can come
+from crates.io; publish the fork's crates under new names; or yank the stale
+`krypt-cli` / `krypt-core` 0.2.x so `cargo install krypt-cli` fails instead of
+installing a broken build.
 
 ### Battery reading on macOS and Windows
 
