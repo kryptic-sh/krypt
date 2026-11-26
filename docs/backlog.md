@@ -135,7 +135,8 @@ Decided 2026-11-27: defer until upstream `gix` ships stash support itself, then
 repoint `gix` at crates.io and restore the two `publish_or_skip` lines. As of
 that date gitoxide `main` had no `gix-stash` crate or `gix::stash` module.
 Considered for now and set aside: dropping auto-stash, renamed fork crates,
-yanking 0.2.x.
+yanking 0.2.x. Asked upstream about plans and offered to implement in
+GitoxideLabs/gitoxide discussion #3256 (2026-11-27); check it before starting.
 
 ### Battery reading on macOS and Windows
 
