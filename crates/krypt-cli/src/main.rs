@@ -141,10 +141,8 @@ enum Command {
     /// Reads the tool config to find the repo, fast-forward-pulls it via gix
     /// (HTTPS only — no SSH; see `krypt init --help`), then re-runs `link`.
     ///
-    /// A dirty working tree is auto-stashed before the pull and restored
-    /// afterwards.  Pass `--no-stash` to revert to the old behaviour (error
-    /// out instead of stashing).  On auto-stash pop conflict, the merged
-    /// state is left on disk and `refs/stash` retains the original stash.
+    /// Refuses to run while the repo has uncommitted changes: commit or
+    /// discard them first.
     Update(UpdateArgs),
 
     /// Copy files from their deployed location into the dotfiles repo.
@@ -265,8 +263,8 @@ struct UpdateArgs {
     #[arg(long)]
     config: Option<PathBuf>,
 
-    /// Change nothing: skip the fetch and pull (and so the auto-stash), and
-    /// plan `link` and the hooks against the repo as it is checked out now.
+    /// Change nothing: skip the fetch and pull, and plan `link` and the hooks
+    /// against the repo as it is checked out now.
     #[arg(long)]
     dry_run: bool,
 
@@ -278,14 +276,6 @@ struct UpdateArgs {
     /// always kept.
     #[arg(long)]
     force: bool,
-
-    /// Skip auto-stash and error immediately if the working tree is dirty.
-    ///
-    /// By default `krypt update` automatically stashes uncommitted changes
-    /// before the pull and restores them afterwards.  Pass this flag to revert
-    /// to the old behaviour: error out instead.
-    #[arg(long)]
-    no_stash: bool,
 }
 
 #[derive(clap::Args, Debug)]
@@ -856,7 +846,6 @@ fn cmd_update(args: UpdateArgs) -> Result<ExitCode> {
         dry_run: args.dry_run,
         skip_hooks: args.skip_hooks,
         force: args.force,
-        no_stash: args.no_stash,
     };
 
     match update(&opts) {
@@ -865,14 +854,8 @@ fn cmd_update(args: UpdateArgs) -> Result<ExitCode> {
                 eprintln!("{warn}");
             }
             if opts.dry_run {
-                if report.stashed {
-                    println!("stash: would auto-stash (working tree has changes)");
-                }
                 println!("pull:  skipped (dry-run: nothing fetched)");
             } else {
-                if report.stashed {
-                    println!("stash: auto-stashed (restored after pull)");
-                }
                 println!("pull:  {}", if report.pulled { "ok" } else { "up to date" });
             }
             println!("link:");

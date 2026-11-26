@@ -58,14 +58,6 @@ for six targets: `x86_64-unknown-linux-gnu`, `x86_64-unknown-linux-musl`,
 
 Every channel installs a binary named `krypt` on your `$PATH`.
 
-> **crates.io trails this repo.** `cargo install krypt-cli` works but installs
-> an older build. Publishing `krypt-core` and `krypt-cli` is currently paused:
-> their `gix` dependency points at the `mxaddict/gitoxide` fork (for `stash` +
-> `merge` plumbing), which `cargo publish` rejects. The `publish-crates` job in
-> [`.github/workflows/ci.yml`](.github/workflows/ci.yml) has those two lines
-> commented out and will be restored once the upstream gitoxide change lands.
-> For the current version, use AUR / Homebrew / Scoop / a release archive.
-
 > The `krypt` crate name on crates.io is held by an unrelated, unmaintained
 > project (`Stupremee/krypt`) — we publish the bin as `krypt-cli` for now.
 > If/when the name transfers (see

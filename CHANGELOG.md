@@ -8,8 +8,23 @@ patch bumps.
 
 ## [Unreleased]
 
+### Breaking
+
+- **`krypt update` no longer auto-stashes, and `--no-stash` is gone.** A dirty
+  dotfiles checkout now stops `krypt update` (and `krypt update --dry-run`) with
+  "working tree has uncommitted changes": commit or discard them first. Scripts
+  that pass `--no-stash` must drop the flag. In `krypt-core`,
+  `UpdateOpts::no_stash`, `UpdateReport::stashed` and the auto-stash
+  `UpdateError` variants are removed. Stash came from a `gix` fork whose
+  upstream PR was declined; it returns once `gix` ships stash support (#44).
+
 ### Fixed
 
+- **`cargo install krypt-cli` installs the current release again.** With the
+  fork gone, `krypt-core` uses `gix` from crates.io, so `krypt-core` and
+  `krypt-cli` publish there again; crates.io had been stuck at 0.2.0, which
+  still failed `krypt init` on a fresh machine with "Could not open data at
+  …/krypt/repo".
 - `krypt` now builds against `url` 2.5.9, which fixes RUSTSEC-2026-0592:
   `Url::origin()` overflowed the stack on deeply nested `blob:` URLs.
 

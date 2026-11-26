@@ -95,13 +95,9 @@ machete jobs:
 5. `brew-tap` — render the formula + push to `kryptic-sh/homebrew-tap@main`
 6. `scoop-bucket` — render the manifest + push to `kryptic-sh/scoop-bucket`
 
-**Only `krypt-platform` and `krypt-pkg` currently reach crates.io.** The
-`publish_or_skip krypt-core` / `publish_or_skip krypt-cli` lines are commented
-out in `ci.yml` because `krypt-core` depends on the `mxaddict/gitoxide` fork by
-git URL for `stash` + `merge` plumbing, and `cargo publish` rejects git
-dependencies. Uncomment both once the upstream gitoxide change lands and the dep
-is repointed at crates.io — and at the same time restore
-`bans.wildcards = "deny"` and drop the `allow-git` entry in `deny.toml`.
+`cargo publish` rejects git dependencies, and `deny.toml` denies them
+(`unknown-git = "deny"`) so one cannot slip in unnoticed and stop the crates
+publishing.
 
 If any step fails, retry with `gh workflow run ci.yml --ref v<version>`.
 

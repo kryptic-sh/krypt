@@ -19,16 +19,12 @@ glob       = { workspace = true }
 sha2       = { workspace = true }
 which      = { workspace = true }
 dialoguer  = { workspace = true }
-gix = { git = "https://github.com/mxaddict/gitoxide", branch = "feat/gix-stash", features = [
+gix = { version = "0.84.0", features = [
     "blocking-http-transport-reqwest-rust-tls",
     "worktree-mutation",
     "status",
     "revision",
-    "stash",
-    "merge",
 ] }
-gix-actor         = { git = "https://github.com/mxaddict/gitoxide", branch = "feat/gix-stash" }
-gix-worktree-state = { git = "https://github.com/mxaddict/gitoxide", branch = "feat/gix-stash" }
 
 krypt-platform = { workspace = true }
 

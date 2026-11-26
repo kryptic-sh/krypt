@@ -1,18 +1,15 @@
 //! Orchestration for `krypt update`.
 //!
-//! Fetches the dotfiles repo from origin (HTTPS only — the fork does not yet
-//! have an SSH transport; see the follow-up issue for the tracking item),
-//! fast-forward-advances the local branch, updates the working tree, then
-//! re-runs `link` to deploy any new files.
+//! Fetches the dotfiles repo from origin (HTTPS only — gix has no SSH
+//! transport), fast-forward-advances the local branch, updates the working
+//! tree, then re-runs `link` to deploy any new files.
 //!
-//! By default a dirty working tree is auto-stashed before the pull and
-//! restored afterwards.  Pass `no_stash: true` in [`UpdateOpts`] (or
-//! `--no-stash` at the CLI) to skip auto-stash and error immediately on a
-//! dirty tree (the old behaviour).
+//! A dirty working tree is refused with [`UpdateError::DirtyWorkingTree`].
+//! Auto-stash waits on stash support in upstream gix (kryptic-sh/krypt#44).
 //!
 //! # HTTPS-only note
 //!
-//! The gitoxide fork does not have an SSH transport, so only HTTPS URLs are
+//! gix does not have an SSH transport, so only HTTPS URLs are
 //! supported.  SSH-based remote URLs will fail with a connection error from
 //! gix.  This limitation will be lifted once gitoxide ships SSH support.
 
@@ -23,9 +20,6 @@
 
 use std::path::{Path, PathBuf};
 use std::sync::atomic::AtomicBool;
-
-use gix::hash::ObjectId;
-use gix_actor::Signature as ActorSignature;
 
 use thiserror::Error;
 
@@ -49,65 +43,12 @@ pub enum UpdateError {
     #[error("loading tool config: {0}")]
     ToolConfig(#[from] ToolConfigError),
 
-    /// The working tree has uncommitted changes and `--no-stash` was set.
-    ///
-    /// By default `krypt update` auto-stashes a dirty working tree and
-    /// re-applies the changes after the pull.  This error only fires when
-    /// `no_stash: true` is passed in [`UpdateOpts`] (CLI flag `--no-stash`).
-    /// Without that flag, commit or discard changes if you do not want
-    /// auto-stash.
+    /// The working tree has uncommitted changes.
     #[error(
-        "working tree has uncommitted changes and --no-stash was set — \
-         commit or discard changes and re-run `krypt update`, \
-         or remove --no-stash to enable auto-stash"
+        "working tree has uncommitted changes — \
+         commit or discard them and re-run `krypt update`"
     )]
     DirtyWorkingTree,
-
-    /// Auto-stash succeeded but the pop after the pull produced merge conflicts.
-    ///
-    /// The pull completed successfully.  Your pre-update changes are still in
-    /// the working tree as conflict markers, and `refs/stash` still holds the
-    /// original stash so you can re-apply it after manual resolution.
-    #[error(
-        "auto-stash pop produced merge conflicts after the pull — \
-         resolve the conflicts in the working tree, then drop the stash \
-         with `git stash drop` (stash OID: {stash_oid})"
-    )]
-    AutoStashConflict {
-        /// OID of the stash commit that was not dropped due to conflicts.
-        stash_oid: ObjectId,
-    },
-
-    /// Auto-stash push failed.
-    #[error("auto-stash push failed: {0}")]
-    StashPush(#[source] Box<gix::stash::PushError>),
-
-    /// Auto-stash pop failed.
-    #[error("auto-stash pop failed: {0}")]
-    StashPop(#[source] Box<gix::stash::PopError>),
-
-    /// No committer identity configured in git config.
-    #[error(
-        "no committer identity configured — set user.name and user.email in git config \
-         (needed for auto-stash commit)"
-    )]
-    NoCommitter,
-
-    /// Committer identity has a bad timestamp in git config.
-    #[error("could not determine committer identity for auto-stash: {0}")]
-    Committer(#[source] gix::config::time::Error),
-
-    /// Could not open the index for the auto-stash.
-    #[error("opening git index for auto-stash: {0}")]
-    OpenIndex(#[source] gix::worktree::open_index::Error),
-
-    /// Could not build blob-merge platform needed by auto-stash pop.
-    #[error("building merge resource cache for auto-stash pop: {0}")]
-    MergeResourceCache(#[source] Box<gix::repository::merge_resource_cache::Error>),
-
-    /// Could not build diff resource cache needed by auto-stash pop.
-    #[error("building diff resource cache for auto-stash pop: {0}")]
-    DiffResourceCache(#[source] gix::repository::diff_resource_cache::Error),
 
     /// Opening the git repository failed.
     #[error("opening git repo at {path:?}: {source}")]
@@ -209,11 +150,6 @@ pub enum UpdateError {
 // ─── Options & report ───────────────────────────────────────────────────────
 
 /// Inputs to [`update`].
-///
-/// By default a dirty working tree is auto-stashed before the pull and
-/// restored afterwards.  Set `no_stash = true` to skip auto-stash and error
-/// immediately on a dirty working tree (matches the old behaviour before gix
-/// gained stash support).
 pub struct UpdateOpts {
     /// Path to the tool config (`${XDG_CONFIG}/krypt/config.toml`).
     pub tool_config_path: PathBuf,
@@ -232,10 +168,6 @@ pub struct UpdateOpts {
 
     /// Pass `force = true` to the link step.
     pub force: bool,
-
-    /// When `true`, skip auto-stash and error if the working tree is dirty
-    /// (matches the prior behaviour before gix gained stash support).
-    pub no_stash: bool,
 }
 
 pub use crate::hooks::HookSummary;
@@ -244,6 +176,7 @@ pub use crate::hooks::HookSummary;
 #[derive(Debug)]
 pub struct UpdateReport {
     /// Whether `git fetch` advanced the repo (i.e. there were new commits).
+    /// Always `false` under `dry_run`, which fetches nothing.
     pub pulled: bool,
 
     /// Report from the `link` step.
@@ -254,20 +187,14 @@ pub struct UpdateReport {
 
     /// Summary of `post-update` hook execution.
     pub hooks: HookSummary,
-
-    /// Whether the working tree was auto-stashed before the pull and
-    /// re-applied after. Under `dry_run`, whether it would have been: a dry
-    /// run neither fetches nor stashes, so `pulled` is then always `false`.
-    pub stashed: bool,
 }
 
 // ─── Implementation ──────────────────────────────────────────────────────────
 
 /// Pull the dotfiles repo and re-deploy.
 ///
-/// By default a dirty working tree is auto-stashed before the pull and
-/// restored afterwards.  Set `opts.no_stash = true` to skip auto-stash and
-/// error immediately on a dirty tree.
+/// Fails with [`UpdateError::DirtyWorkingTree`] when the repo has uncommitted
+/// changes, also under `dry_run`.
 pub fn update(opts: &UpdateOpts) -> Result<UpdateReport, UpdateError> {
     let tool_cfg = ToolConfig::load(&opts.tool_config_path)?.ok_or_else(|| {
         UpdateError::ToolConfigMissing {
@@ -281,10 +208,11 @@ pub fn update(opts: &UpdateOpts) -> Result<UpdateReport, UpdateError> {
         .clone()
         .unwrap_or_else(|| repo_path.join(".krypt.toml"));
 
-    let (pulled, stashed) = if opts.dry_run {
-        (false, dry_run_pull(repo_path, opts.no_stash)?)
+    let pulled = if opts.dry_run {
+        ensure_clean(repo_path)?;
+        false
     } else {
-        gix_ff_pull(repo_path, opts.no_stash)?
+        gix_ff_pull(repo_path)?
     };
 
     let krypt_cfg = crate::include::load_with_includes(&config_path).ok();
@@ -318,18 +246,15 @@ pub fn update(opts: &UpdateOpts) -> Result<UpdateReport, UpdateError> {
         link: link_report,
         version_warning,
         hooks: hooks_summary,
-        stashed,
     })
 }
 
 // ─── Internals ───────────────────────────────────────────────────────────────
 
-/// Open the repo, optionally auto-stash a dirty working tree, fetch from
-/// origin, fast-forward the local branch, then restore the stash.
+/// Open the repo, refuse a dirty working tree, fetch from origin, then
+/// fast-forward the local branch.
 ///
-/// Returns `(pulled, stashed)` where:
-/// * `pulled` — `true` if new commits were received, `false` if already up to date.
-/// * `stashed` — `true` if the working tree was auto-stashed and restored.
+/// Returns `true` if new commits were received, `false` if already up to date.
 ///
 /// # Why not shell out to `git pull --ff-only`?
 ///
@@ -338,39 +263,15 @@ pub fn update(opts: &UpdateOpts) -> Result<UpdateReport, UpdateError> {
 /// rustls — no OpenSSL, no libssh2.  The trade-off is that we must implement
 /// the pull logic ourselves:
 ///
-/// 1. `repo.is_dirty()` — auto-stash if dirty (or bail with `DirtyWorkingTree`
-///    when `no_stash` is true).
+/// 1. `repo.is_dirty()` — bail with `DirtyWorkingTree` if dirty.
 /// 2. `remote.connect(Fetch).prepare_fetch().receive()` — download new objects
 ///    and update `refs/remotes/origin/<branch>`.
 /// 3. Confirm `merge_base(HEAD, remote_tracking) == HEAD` — i.e. remote is
 ///    strictly ahead (fast-forward safe).
 /// 4. Advance the local branch ref and check out the new tree.
-/// 5. Pop the stash if one was created.
-fn gix_ff_pull(repo_path: &Path, no_stash: bool) -> Result<(bool, bool), UpdateError> {
-    // ── 1. Dirty check / auto-stash ──────────────────────────────────────────
-    let (mut repo, is_dirty) = open_and_check_dirty(repo_path)?;
-
-    let mut stashed = false;
-    let mut stash_oid: Option<ObjectId> = None;
-
-    if is_dirty {
-        if no_stash {
-            return Err(UpdateError::DirtyWorkingTree);
-        }
-        // Auto-stash: capture current state and reset WT to HEAD.
-        // `is_dirty()` can produce a false positive (stat-cache staleness).
-        // When that happens, gix::stash::push returns NoLocalChanges — treat
-        // it as a clean tree and skip the stash rather than erroring out.
-        match stash_push(&mut repo, repo_path) {
-            Ok(oid) => {
-                stash_oid = Some(oid);
-                stashed = true;
-            }
-            Err(UpdateError::StashPush(ref e))
-                if matches!(**e, gix::stash::PushError::NoLocalChanges) => {}
-            Err(e) => return Err(e),
-        }
-    }
+fn gix_ff_pull(repo_path: &Path) -> Result<bool, UpdateError> {
+    // ── 1. Dirty check ───────────────────────────────────────────────────────
+    let repo = ensure_clean(repo_path)?;
 
     // ── 2. Fetch from the default remote ────────────────────────────────────
     let interrupt = AtomicBool::new(false);
@@ -425,11 +326,7 @@ fn gix_ff_pull(repo_path: &Path, no_stash: bool) -> Result<(bool, bool), UpdateE
         .detach();
 
     if head_oid == new_oid {
-        // Nothing to pull — still pop the stash if we pushed one.
-        if let Some(sid) = stash_oid {
-            stash_pop(&mut repo, repo_path, head_oid, sid)?;
-        }
-        return Ok((false, stashed));
+        return Ok(false);
     }
 
     // ── 5. Fast-forward check ────────────────────────────────────────────────
@@ -472,9 +369,6 @@ fn gix_ff_pull(repo_path: &Path, no_stash: bool) -> Result<(bool, bool), UpdateE
     // from the new tree and checking out is equivalent to `git reset --hard`.
     // Files removed from the new tree must be explicitly unlinked: we compare
     // the old and new indices and delete anything that disappeared.
-    //
-    // All borrows of `repo` that hold references (objects, workdir) are
-    // scoped here so they are dropped before `stash_pop` takes a `&mut repo`.
     {
         let new_commit = repo
             .find_object(new_oid)
@@ -543,194 +437,23 @@ fn gix_ff_pull(repo_path: &Path, no_stash: bool) -> Result<(bool, bool), UpdateE
             .map_err(UpdateError::WriteIndex)?;
     }
 
-    // ── 8. Pop stash if we pushed one ────────────────────────────────────────
-    //
-    // The new HEAD tree is used as the "ours" side of the 3-way merge inside
-    // pop.  We use `new_oid` (the updated HEAD) rather than the original
-    // `head_oid` so that the merge base is the stash parent[0] and the
-    // merge resolves against the pulled state.
-    if let Some(sid) = stash_oid {
-        stash_pop(&mut repo, repo_path, new_oid, sid)?;
-    }
-
-    Ok((true, stashed))
+    Ok(true)
 }
 
-/// The pull step of a dry run: report whether [`gix_ff_pull`] would
-/// auto-stash, and refuse as it would under `no_stash`, without fetching,
-/// stashing, moving the branch or checking anything out.
-fn dry_run_pull(repo_path: &Path, no_stash: bool) -> Result<bool, UpdateError> {
-    let (_, is_dirty) = open_and_check_dirty(repo_path)?;
-    if is_dirty && no_stash {
-        return Err(UpdateError::DirtyWorkingTree);
-    }
-    Ok(is_dirty)
-}
-
-fn open_and_check_dirty(repo_path: &Path) -> Result<(gix::Repository, bool), UpdateError> {
+/// Open the repo and fail with [`UpdateError::DirtyWorkingTree`] if it has
+/// uncommitted changes.
+fn ensure_clean(repo_path: &Path) -> Result<gix::Repository, UpdateError> {
     let repo = gix::open(repo_path).map_err(|e| UpdateError::OpenRepo {
         path: repo_path.to_path_buf(),
         source: Box::new(e),
     })?;
-    let is_dirty = repo
+    if repo
         .is_dirty()
-        .map_err(|e| UpdateError::GitStatus(Box::new(e)))?;
-    Ok((repo, is_dirty))
-}
-
-// ─── Stash helpers ───────────────────────────────────────────────────────────
-
-/// Capture the current working-tree state as a stash commit at `refs/stash`.
-///
-/// Returns the OID of the newly-created stash commit so the caller can pass it
-/// to [`stash_pop`].
-///
-/// The stash message is `krypt-update-auto-stash` so it is easy to identify.
-/// Untracked files are included (`include_untracked: true`) so that new,
-/// unstaged files are not silently left behind after the pull.
-fn stash_push(repo: &mut gix::Repository, repo_path: &Path) -> Result<ObjectId, UpdateError> {
-    let head_oid = repo
-        .head_id()
-        .map_err(|_| UpdateError::DetachedHead)?
-        .detach();
-
-    let head_commit = repo
-        .find_object(head_oid)
-        .map_err(|_| UpdateError::DetachedHead)?;
-    let head_tree_id = head_commit
-        .peel_to_tree()
-        .map_err(|_| UpdateError::DetachedHead)?
-        .id;
-
-    // Read the on-disk index.
-    let index_file = repo.open_index().map_err(UpdateError::OpenIndex)?;
-    let index_state = index_file.into();
-
-    // Resolve committer identity — use the fallback path so we never panic on
-    // an unconfigured repo (krypt sets up a sane user.name / user.email).
-    let committer_sig = repo
-        .committer()
-        .ok_or(UpdateError::NoCommitter)?
-        .map_err(UpdateError::Committer)?;
-    // Materialize as owned so we can take a fresh `to_ref` with a local TimeBuf.
-    let committer_owned: ActorSignature = committer_sig.into();
-
-    let workdir = repo.workdir().ok_or(UpdateError::DetachedHead)?.to_owned();
-
-    let head_branch: Option<gix::refs::FullName> =
-        repo.head_ref().ok().flatten().map(|r| r.name().to_owned());
-
-    let mut time_buf = gix::date::parse::TimeBuf::default();
-    let committer_ref = committer_owned.to_ref(&mut time_buf);
-
-    let outcome = gix::stash::push(
-        gix::stash::PushContext {
-            refs: &repo.refs,
-            objects: &repo.objects,
-            index: &index_state,
-            worktree: &workdir,
-            committer: committer_ref,
-            // TODO(gix-stash): wire up smudge filters once gix-stash uses the
-            // filter pipeline.  For krypt dotfile content the default (no
-            // filters) is correct.
-            checkout_options: gix_worktree_state::checkout::Options {
-                overwrite_existing: true,
-                ..Default::default()
-            },
-        },
-        head_oid,
-        head_tree_id,
-        head_branch.as_ref().map(|n| n.as_ref()),
-        gix::stash::PushOptions {
-            include_untracked: true,
-            keep_index: false,
-            message: Some("krypt-update-auto-stash".into()),
-            include_ignored: false,
-        },
-    )
-    .map_err(|e| UpdateError::StashPush(Box::new(e)))?;
-
-    tracing::info!(
-        stash = %outcome.stash,
-        repo = %repo_path.display(),
-        "auto-stashed working tree before krypt update"
-    );
-
-    Ok(outcome.stash)
-}
-
-/// Apply the latest stash entry to the working tree (3-way merge) and drop it
-/// from `refs/stash`.
-///
-/// `head_tree` is the OID of the root tree that `HEAD` currently points at
-/// (the "ours" side of the 3-way merge).  `_stash_oid` is used only for
-/// conflict-error reporting; the actual pop reads `refs/stash` directly.
-fn stash_pop(
-    repo: &mut gix::Repository,
-    repo_path: &Path,
-    head_tree_commit: ObjectId,
-    stash_oid: ObjectId,
-) -> Result<(), UpdateError> {
-    // Resolve the HEAD tree OID from the commit.
-    let head_tree_id = repo
-        .find_object(head_tree_commit)
-        .map_err(|_| UpdateError::DetachedHead)?
-        .peel_to_tree()
-        .map_err(|_| UpdateError::DetachedHead)?
-        .id;
-
-    let committer_sig = repo
-        .committer()
-        .ok_or(UpdateError::NoCommitter)?
-        .map_err(UpdateError::Committer)?;
-    let committer_owned: ActorSignature = committer_sig.into();
-
-    let workdir = repo.workdir().ok_or(UpdateError::DetachedHead)?.to_owned();
-
-    // Build the blob-merge and diff-resource platforms the pop context needs.
-    let mut blob_merge = repo
-        .merge_resource_cache(Default::default())
-        .map_err(|e| UpdateError::MergeResourceCache(Box::new(e)))?;
-    let mut diff_cache = repo
-        .diff_resource_cache_for_tree_diff()
-        .map_err(UpdateError::DiffResourceCache)?;
-
-    let mut time_buf = gix::date::parse::TimeBuf::default();
-    let committer_ref = committer_owned.to_ref(&mut time_buf);
-
-    let outcome = gix::stash::pop(
-        gix::stash::PopContext {
-            refs: &repo.refs,
-            objects: &repo.objects,
-            committer: committer_ref,
-            worktree: &workdir,
-            blob_merge: &mut blob_merge,
-            diff_cache: &mut diff_cache,
-            checkout_options: gix_worktree_state::checkout::Options {
-                overwrite_existing: true,
-                ..Default::default()
-            },
-        },
-        head_tree_id,
-    )
-    .map_err(|e| UpdateError::StashPop(Box::new(e)))?;
-
-    if outcome.had_conflicts {
-        tracing::warn!(
-            stash = %stash_oid,
-            repo = %repo_path.display(),
-            "auto-stash pop produced merge conflicts after krypt update"
-        );
-        return Err(UpdateError::AutoStashConflict { stash_oid });
+        .map_err(|e| UpdateError::GitStatus(Box::new(e)))?
+    {
+        return Err(UpdateError::DirtyWorkingTree);
     }
-
-    tracing::info!(
-        stash = %stash_oid,
-        repo = %repo_path.display(),
-        "auto-stash restored cleanly after krypt update"
-    );
-
-    Ok(())
+    Ok(repo)
 }
 
 /// Returns a warning string when our binary version is older than `min_version`.
@@ -897,7 +620,6 @@ mod tests {
             dry_run: false,
             skip_hooks: false,
             force: false,
-            no_stash: true,
         })
         .unwrap_err();
 
@@ -907,46 +629,10 @@ mod tests {
         );
     }
 
-    /// `--dry-run` leaves a dirty tree as it is: no stash, no fetch (the repo
-    /// has no remote, which a real pull would fail on), and reports that the
-    /// real run would stash.
+    /// `--dry-run` on a dirty tree refuses, as the real run would, and
+    /// leaves the tree as it is.
     #[test]
-    fn dry_run_does_not_stash_or_pull() {
-        let local = dirty_repo();
-        fs::write(local.path().join(".krypt.toml"), "").unwrap();
-        let tc_dir = tempdir().unwrap();
-        let tc_path = make_tool_config(local.path(), &tc_dir);
-        let state = tempdir().unwrap();
-
-        let report = update(&UpdateOpts {
-            tool_config_path: tc_path,
-            config_path: Some(local.path().join(".krypt.toml")),
-            manifest_path: state.path().join("manifest.json"),
-            dry_run: true,
-            skip_hooks: false,
-            force: false,
-            no_stash: false,
-        })
-        .expect("dry run");
-
-        assert!(report.stashed, "a dirty tree would be stashed");
-        assert!(!report.pulled);
-        assert_eq!(
-            fs::read(local.path().join("tracked.txt")).unwrap(),
-            b"modified"
-        );
-        let repo = gix::open(local.path()).expect("open");
-        assert!(
-            repo.try_find_reference("refs/stash")
-                .expect("lookup")
-                .is_none(),
-            "dry run created a stash"
-        );
-    }
-
-    /// `--dry-run --no-stash` on a dirty tree refuses, as the real run would.
-    #[test]
-    fn dry_run_no_stash_dirty_errors() {
+    fn dry_run_dirty_errors() {
         let local = dirty_repo();
         let tc_dir = tempdir().unwrap();
         let tc_path = make_tool_config(local.path(), &tc_dir);
@@ -959,13 +645,16 @@ mod tests {
             dry_run: true,
             skip_hooks: false,
             force: false,
-            no_stash: true,
         })
         .unwrap_err();
 
         assert!(
             matches!(err, UpdateError::DirtyWorkingTree),
             "expected DirtyWorkingTree, got {err:?}"
+        );
+        assert_eq!(
+            fs::read(local.path().join("tracked.txt")).unwrap(),
+            b"modified"
         );
     }
 
@@ -982,7 +671,6 @@ mod tests {
             dry_run: false,
             skip_hooks: false,
             force: false,
-            no_stash: false,
         })
         .unwrap_err();
 

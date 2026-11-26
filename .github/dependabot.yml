@@ -13,10 +13,9 @@ updates:
       - dependencies
       - rust
     groups:
-      # gix, gix-actor and gix-worktree-state come from one git branch, so a
-      # bump to any of them moves all three and arrived as three PRs with the
-      # same Cargo.lock change. Listed first: a dependency joins the first
-      # group it matches.
+      # gix and its gix-* crates release together, so a bump to one moves the
+      # rest in the same Cargo.lock change. Listed first: a dependency joins
+      # the first group it matches.
       gitoxide:
         patterns:
           - gix

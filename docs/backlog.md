@@ -63,15 +63,6 @@ the MessageBox-versus-toast choice above.
 
 ## Bugs
 
-### Auto-stash fails on git symlinks checked out as files
-
-The same run failed reading `.claude-work/CLAUDE.md`, a symlink in git that Git
-for Windows (`core.symlinks = false`) checks out as a small text file holding
-the target path. gix's stash reads the worktree entry as a symlink and errors,
-so `krypt update` cannot stash in such a repo on Windows. The mxaddict dotfiles
-are dropping their symlinks, which hides this there; any other repo with
-symlinks still hits it.
-
 ### `file://` clones need `git-upload-pack` on `PATH`
 
 gix's local transport spawns `git-upload-pack`, so `krypt init <file://...>`
@@ -110,33 +101,14 @@ mxaddict dotfiles' `.config/swaync/**/*` link on 2026-11-02 left an empty
 and krypt created it would need the manifest to record created directories,
 which it does not today.
 
-### `krypt-core` and `krypt-cli` are not published to crates.io
+### Upgrade `gix` past 0.84
 
-The `publish-crates` job in `.github/workflows/ci.yml` publishes only
-`krypt-platform` and `krypt-pkg`; the `krypt-core` / `krypt-cli` lines are
-commented out because their `gix` dependency points at the `mxaddict/gitoxide`
-fork for the `stash` and `merge` features, which crates.io's `gix` lacks, so
-`cargo publish` rejects the manifest. The job still reports success. As of the
-v0.5.0 release (2026-10-30), crates.io had `krypt-pkg` / `krypt-platform` at
-0.5.0 and `krypt-core` / `krypt-cli` at 0.2.0, so `cargo install krypt-cli`
-installs an old binary: 0.2.0 still hits the `krypt init` "Could not open data
-at …/krypt/repo" error fixed in 0.2.2, seen on a fresh machine on 2026-11-27.
-AUR, brew, scoop and GitHub Releases are unaffected.
-
-The upstream route is gone: GitoxideLabs/gitoxide#2603 was closed unmerged on
-2026-07-01, the maintainer having their own plans for `gix-stash`, so there is
-no date to wait for. Only `gix::stash` (auto-stash in `update.rs`) needs the
-fork. Options needing a decision: drop or replace auto-stash so `gix` can come
-from crates.io; publish the fork's crates under new names; or yank the stale
-`krypt-cli` / `krypt-core` 0.2.x so `cargo install krypt-cli` fails instead of
-installing a broken build.
-
-Decided 2026-11-27: defer until upstream `gix` ships stash support itself, then
-repoint `gix` at crates.io and restore the two `publish_or_skip` lines. As of
-that date gitoxide `main` had no `gix-stash` crate or `gix::stash` module.
-Considered for now and set aside: dropping auto-stash, renamed fork crates,
-yanking 0.2.x. Asked upstream about plans and offered to implement in
-GitoxideLabs/gitoxide discussion #3256 (2026-11-27); check it before starting.
+`krypt-core` pins `gix` 0.84, the release the old stash fork was based on.
+crates.io has 0.91, which replaces the per-module error types
+(`gix::open::Error`, `gix::clone::Error`, `gix::remote::fetch::Error`, …) with a
+single `gix::Error`, so `UpdateError` and `InitError` need reworking and their
+variants mostly collapse. Checked 2026-11-27 by building against 0.91: the
+compile errors were all in `update.rs`, `init.rs` and `copy.rs`.
 
 ### Battery reading on macOS and Windows
 
@@ -210,9 +182,8 @@ since logging a battery reading only works on Linux.
 ## Coverage gaps
 
 - **Not reviewed** beyond a scan for platform-specific code (`cfg`, direct env
-  reads, process spawns, path separators): `update` (gix pull and auto-stash),
-  `setup` template writers, `adopt`, `doctor`, `deploy` manifest handling,
-  `include`.
+  reads, process spawns, path separators): `update` (gix pull), `setup` template
+  writers, `adopt`, `doctor`, `deploy` manifest handling, `include`.
 - The `x86_64-apple-darwin`, `x86_64-unknown-linux-musl` and
   `aarch64-unknown-linux-gnu` release targets are compiled by the `build` job
   but no tests run on them.
