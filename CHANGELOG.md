@@ -8,15 +8,20 @@ patch bumps.
 
 ## [Unreleased]
 
+### Fixed
+
+- `krypt` now builds against `url` 2.5.9, which fixes RUSTSEC-2026-0592:
+  `Url::origin()` overflowed the stack on deeply nested `blob:` URLs.
+
 ## [0.6.1] - 2026-11-05
 
 ### Fixed
 
-- **`krypt deps` runs `paru` as the invoking user, not through `sudo`.** On
-  Arch with `paru` installed, every install ran `sudo paru -S …`, and paru
-  refuses to install AUR packages as root, so any group with an AUR package
-  failed. `paru` now runs unprivileged and raises its own privileges with
-  `sudo` for the pacman step; `pacman` alone still runs through `sudo`.
+- **`krypt deps` runs `paru` as the invoking user, not through `sudo`.** On Arch
+  with `paru` installed, every install ran `sudo paru -S …`, and paru refuses to
+  install AUR packages as root, so any group with an AUR package failed. `paru`
+  now runs unprivileged and raises its own privileges with `sudo` for the pacman
+  step; `pacman` alone still runs through `sudo`.
 
 ## [0.6.0] - 2026-11-01
 
