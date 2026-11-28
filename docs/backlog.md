@@ -3,6 +3,26 @@
 Work raised and not finished, decisions still open, and gaps in what has been
 verified. Delete an entry when it ships; `git log` keeps the history.
 
+## Scope PR CI runs to the jobs a change needs (asked by the owner, 2026-11-28)
+
+A pull request runs every CI job, whatever files it touches. Run only the jobs
+whose inputs changed, judged from the PR's changed files. Not started.
+
+- **What exists:** pull requests run `ci.yml` in full; no workflow filters by
+  path.
+- **How, without a new dependency:** a first job lists the PR's changed files
+  against its base (`git diff --name-only`) and maps them to the jobs that need
+  them, and the other jobs read its outputs in their `if:`. Changes to
+  `.github/`, the lockfile or the toolchain pin select everything; in a Cargo
+  workspace a changed crate selects its reverse dependencies too. A path-filter
+  action such as `dorny/paths-filter` would be a new dependency, which is the
+  owner's call.
+- **Keep:** pushes to the default branch, tags and scheduled runs still run
+  everything. A skipped job says why in the run summary rather than passing
+  silently, and since a job skipped by `if:` reports as skipped, required checks
+  and any release job's `needs` must tolerate it; one summary job to require is
+  the usual answer.
+
 ## Decisions needed
 
 ### `krypt <group> <name>` ignores `[meta] notify_backend`
