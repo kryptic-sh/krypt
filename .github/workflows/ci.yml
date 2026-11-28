@@ -142,6 +142,22 @@ jobs:
           submodules: recursive
       - uses: EmbarkStudios/cargo-deny-action@v2
 
+  # Fails only on vulnerabilities; unmaintained, unsound and yanked crates
+  # are reported as warnings.
+  audit:
+    name: cargo-audit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-audit
+      # Reading Cargo.lock needs no compiler, so skip installing the pinned
+      # rust-toolchain.toml and use the runner's stable cargo.
+      - run: cargo audit
+        env:
+          RUSTUP_TOOLCHAIN: stable
+
   machete:
     name: cargo-machete
     runs-on: ubuntu-latest
@@ -164,7 +180,7 @@ jobs:
   # tag-gated.
   build:
     name: ${{ matrix.target }}
-    needs: [fmt, clippy, test, distro, deny, machete]
+    needs: [fmt, clippy, test, distro, deny, audit, machete]
     permissions:
       contents: write
     strategy:

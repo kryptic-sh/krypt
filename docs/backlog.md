@@ -182,6 +182,17 @@ since logging a battery reading only works on Linux.
 
 ## Not bugs
 
+- **`cargo audit` warns about `heapless` 0.8.0 being unsound** (nine advisories,
+  RUSTSEC-2026-0574 onward). It comes in through gix-hash → `faster-hex` 0.10.1,
+  which declares heapless under
+  `[target.'cfg(not(feature = "alloc"))'.dependencies]`. Cargo does not evaluate
+  features in a target cfg, so heapless always lands in `Cargo.lock`, but
+  gix-hash builds faster-hex with `std` (which enables `alloc`), so faster-hex's
+  only heapless use (`String`/`Vec` in `encode.rs`, under
+  `#[cfg(not(feature = "alloc"))]`) is compiled out. The advisories cover
+  `Deque`, `IndexMap`, `Spsc` and other types nothing in the tree uses. Checked
+  2026-11-28 against faster-hex 0.10.1 and gix-hash 0.25.1; it goes away with
+  the gix upgrade if newer gix-hash moves to faster-hex 2.x.
 - **Defender quarantines the v0.6.0 and v0.6.1 Windows `krypt.exe`** as
   `Trojan:Win32/Bearfoos.B!ml`, a false positive. Checked on 2026-11-13: the
   release zip is what CI built for the tag (hash matches `SHA256SUMS`, the
