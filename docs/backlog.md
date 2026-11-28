@@ -75,6 +75,28 @@ on `PATH` (following a scoop shim), or document it. HTTPS clones are unaffected.
 
 ## Deferred
 
+### Styled output and progress indicators
+
+Raised 2026-11-28: command output is plain `println!` text and looks bland, and
+the slow steps show nothing while they run. Wanted: styled output (colour,
+symbols, aligned status lines) across the commands, and progress indicators on
+the steps that take a while: the clone in `krypt init`, the fetch and checkout
+in `krypt update`, package installs in `krypt deps`, and any other long step.
+
+What exists today: every gix call passes `gix::progress::Discard` (`init.rs`,
+`update.rs`), so gix's own progress reporting is thrown away rather than shown.
+Package installs go through `PackageManager::run` in `krypt-pkg`. `console`,
+`anstyle` / `anstream` and `owo-colors` are already in `Cargo.lock` through
+clap, dialoguer and color-eyre, but `krypt-cli` does not depend on any of them
+directly, and a progress-bar crate such as `indicatif` would be a new
+dependency, which is the user's call.
+
+Constraints: colour and spinners must turn off when stdout is not a terminal and
+under `NO_COLOR`, so piped output and CI logs stay clean. The `insta` snapshot
+tests in `krypt-cli` pin the current text and will need updating alongside.
+Package managers that prompt (`sudo`, `paru`) must keep the terminal to
+themselves while they run, so a spinner cannot draw over them.
+
 ### Release workflow trusts moving action tags
 
 `.github/workflows/ci.yml` pins third-party actions to tags that can be moved
